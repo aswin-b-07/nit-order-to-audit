@@ -16,6 +16,9 @@ from core.models import (
     ProductPrice,
     Order,
     OrderLine,
+    Invoice,
+    InvoiceLine,
+    Payment,
 )
 from core.services import (
     get_balance,
@@ -32,6 +35,13 @@ from core.services import (
     update_order_line,
     approve_order,
     reject_order,
+    financial_year,
+    gst_for_line,
+    create_invoice,
+    record_dispatch,
+    invoice_outstanding,
+    customer_outstanding,
+    record_payment,
 )
 
 
@@ -471,3 +481,194 @@ class OrderApprovalTests(TestCase):
         # an empty lines list raises ValueError
         with self.assertRaises(ValueError):
             place_order(self.retailer_a, self.salesman_a, [])
+
+
+class InvoiceDispatchPaymentTests(TestCase):
+    def setUp(self):
+        # Setup helper: seed, buy 60 kg flour at Rs 45, benchmark production run (stock Murukku = 238)
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+        )
+
+        # Run benchmark production run (actual_output 188)
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+        )
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        User = get_user_model()
+        self.salesman_a = User.objects.create_user(username="salesman_a", password="password")
+        self.salesman_b = User.objects.create_user(username="salesman_b", password="password")
+        self.admin1 = User.objects.create_user(username="admin1", password="password", is_staff=True)
+
+        self.retailer_a = Customer.objects.get(name="Retailer A")
+        self.distributor_b = Customer.objects.get(name="Distributor B")
+
+    def test_financial_year(self):
+        # financial_year: date(2027,3,31) -> "2026-27"; date(2027,4,1) -> "2027-28"; date(2026,4,1) -> "2026-27"
+        self.assertEqual(financial_year(date(2027, 3, 31)), "2026-27")
+        self.assertEqual(financial_year(date(2027, 4, 1)), "2027-28")
+        self.assertEqual(financial_year(date(2026, 4, 1)), "2026-27")
+
+    def test_retailer_a_invoicing_dispatch_and_payments(self):
+        # Retailer A: place_order 150, approve_order, create_invoice(order, admin1, invoice_date=date(2026,11,24))
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        # number "INV/2026-27/0001", supply_type INTRA, taxable_paise 750000, cgst_paise 18750,
+        # sgst_paise 18750, igst_paise 0, total_paise 787500, order.status INVOICED,
+        # the line hsn_code "2106", customer_gstin copied from the customer
+        self.assertEqual(inv.number, "INV/2026-27/0001")
+        self.assertEqual(inv.supply_type, Invoice.SupplyType.INTRA)
+        self.assertEqual(inv.taxable_paise, 750000)
+        self.assertEqual(inv.cgst_paise, 18750)
+        self.assertEqual(inv.sgst_paise, 18750)
+        self.assertEqual(inv.igst_paise, 0)
+        self.assertEqual(inv.total_paise, 787500)
+        self.assertEqual(inv.customer_gstin, self.retailer_a.gstin)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.INVOICED)
+
+        line = inv.lines.first()
+        self.assertEqual(line.hsn_code, "2106")
+
+        # the invoice totals equal the sum of its lines
+        self.assertEqual(inv.taxable_paise, sum(l.taxable_paise for l in inv.lines.all()))
+        self.assertEqual(inv.cgst_paise, sum(l.cgst_paise for l in inv.lines.all()))
+        self.assertEqual(inv.sgst_paise, sum(l.sgst_paise for l in inv.lines.all()))
+        self.assertEqual(inv.igst_paise, sum(l.igst_paise for l in inv.lines.all()))
+        self.assertEqual(inv.total_paise, sum(l.taxable_paise + l.cgst_paise + l.sgst_paise + l.igst_paise for l in inv.lines.all()))
+
+        # record_dispatch(invoice, admin1): one StockLedger row with movement_type DISPATCH,
+        # quantity -150, value_paise -255567, source_type "Invoice", source_id equal to the invoice id;
+        # Murukku 200 g balance is 88; order.status DISPATCHED
+        record_dispatch(inv, self.admin1)
+
+        dispatch_row = StockLedger.objects.get(source_type="Invoice", source_id=inv.id)
+        self.assertEqual(dispatch_row.movement_type, StockLedger.MovementType.DISPATCH)
+        self.assertEqual(dispatch_row.quantity, -150)
+        self.assertEqual(dispatch_row.value_paise, -255567)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DISPATCHED)
+
+        # record_dispatch a second time raises ValueError and the balance stays 88
+        with self.assertRaises(ValueError):
+            record_dispatch(inv, self.admin1)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # payments: record_payment(invoice A, 400000, any date, "UPI") works;
+        # invoice_outstanding is 387500; customer_outstanding(Retailer A) is 387500;
+        # a payment of 387501 raises ValueError; a payment of 0 raises ValueError
+        pay = record_payment(inv, 400000, date(2026, 11, 25), Payment.Mode.UPI)
+        self.assertIsNotNone(pay.id)
+        self.assertEqual(invoice_outstanding(inv), 387500)
+        self.assertEqual(customer_outstanding(self.retailer_a), 387500)
+
+        with self.assertRaises(ValueError):
+            record_payment(inv, 387501, date(2026, 11, 26), Payment.Mode.BANK)
+
+        with self.assertRaises(ValueError):
+            record_payment(inv, 0, date(2026, 11, 26), Payment.Mode.CASH)
+
+    def test_distributor_b_interstate_invoice(self):
+        # Distributor B: place_order 120, approve_order raises ValueError containing "32";
+        # update_order_line to 88; approve_order;
+        # create_invoice(..., invoice_date=date(2026,11,24)):
+        # number "INV/2026-27/0002", supply_type INTER, taxable_paise 440000,
+        # igst_paise 22000, cgst_paise 0, sgst_paise 0, total_paise 462000
+        # (Note: we first invoice order1 for Retailer A to get seq 1)
+        order_a = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order_a, self.admin1)
+        create_invoice(order_a, self.admin1, invoice_date=date(2026, 11, 24))
+        record_dispatch(order_a.invoice, self.admin1)  # Murukku stock is now 88
+
+        order_b = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 120)])
+        with self.assertRaises(ValueError) as ctx:
+            approve_order(order_b, self.admin1)
+        self.assertIn("32", str(ctx.exception))
+
+        update_order_line(order_b, self.murukku, 88)
+        approve_order(order_b, self.admin1)
+        inv_b = create_invoice(order_b, self.admin1, invoice_date=date(2026, 11, 24))
+
+        self.assertEqual(inv_b.number, "INV/2026-27/0002")
+        self.assertEqual(inv_b.supply_type, Invoice.SupplyType.INTER)
+        self.assertEqual(inv_b.taxable_paise, 440000)
+        self.assertEqual(inv_b.igst_paise, 22000)
+        self.assertEqual(inv_b.cgst_paise, 0)
+        self.assertEqual(inv_b.sgst_paise, 0)
+        self.assertEqual(inv_b.total_paise, 462000)
+
+    def test_create_invoice_validation_errors(self):
+        # create_invoice on a SUBMITTED order raises ValueError;
+        # create_invoice twice on the same order raises ValueError
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 10)])
+        with self.assertRaises(ValueError):
+            create_invoice(order, self.admin1)
+
+        approve_order(order, self.admin1)
+        create_invoice(order, self.admin1)
+
+        with self.assertRaises(ValueError):
+            create_invoice(order, self.admin1)
+
+    def test_competing_orders_dispatch(self):
+        # competing orders: two APPROVED orders of 150 packets each (stock 238 at approval time),
+        # both invoiced; dispatching the first works (stock 88); dispatching the second raises ValueError,
+        # the second order stays INVOICED, stock stays 88 and no new ledger row exists
+        order1 = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order1, self.admin1)
+
+        order2 = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 150)])
+        approve_order(order2, self.admin1)
+
+        inv1 = create_invoice(order1, self.admin1, invoice_date=date(2026, 11, 24))
+        inv2 = create_invoice(order2, self.admin1, invoice_date=date(2026, 11, 24))
+
+        record_dispatch(inv1, self.admin1)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        ledger_count = StockLedger.objects.count()
+        with self.assertRaises(ValueError):
+            record_dispatch(inv2, self.admin1)
+
+        order2.refresh_from_db()
+        self.assertEqual(order2.status, Order.Status.INVOICED)
+        self.assertEqual(get_balance(self.murukku), 88)
+        self.assertEqual(StockLedger.objects.count(), ledger_count)
+
+    def test_first_invoice_new_financial_year(self):
+        # first invoice of a new FY: create_invoice with invoice_date=date(2027,4,1) gets number "INV/2027-28/0001"
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 10)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2027, 4, 1))
+        self.assertEqual(inv.number, "INV/2027-28/0001")

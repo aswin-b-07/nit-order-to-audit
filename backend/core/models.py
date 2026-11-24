@@ -297,3 +297,109 @@ class OrderLine(models.Model):
         return f"{self.order} - {self.product.name} x {self.quantity}"
 
 
+class Invoice(models.Model):
+    """Tax invoice generated for an approved sales order."""
+
+    class SupplyType(models.TextChoices):
+        INTRA = "INTRA", "Intra-state"
+        INTER = "INTER", "Inter-state"
+
+    class Status(models.TextChoices):
+        ISSUED = "ISSUED", "Issued"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.PROTECT,
+        related_name="invoice",
+    )
+    number = models.CharField(max_length=30, unique=True)
+    fy = models.CharField(max_length=7)
+    seq = models.PositiveIntegerField()
+    invoice_date = models.DateField()
+    customer_name = models.CharField(max_length=100)
+    customer_gstin = models.CharField(max_length=15, blank=True)
+    customer_state_code = models.CharField(max_length=2)
+    supply_type = models.CharField(max_length=5, choices=SupplyType.choices)
+    taxable_paise = models.IntegerField(default=0)
+    cgst_paise = models.IntegerField(default=0)
+    sgst_paise = models.IntegerField(default=0)
+    igst_paise = models.IntegerField(default=0)
+    total_paise = models.IntegerField(default=0)
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.ISSUED,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("fy", "seq")
+
+    def __str__(self):
+        return f"Invoice {self.number}"
+
+
+class InvoiceLine(models.Model):
+    """Line item in a tax invoice."""
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="lines",
+    )
+    product = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+    )
+    description = models.CharField(max_length=100)
+    hsn_code = models.CharField(max_length=8)
+    quantity = models.PositiveIntegerField()
+    unit_price_paise = models.IntegerField()
+    gst_rate_bp = models.IntegerField()
+    taxable_paise = models.IntegerField()
+    cgst_paise = models.IntegerField()
+    sgst_paise = models.IntegerField()
+    igst_paise = models.IntegerField()
+
+    def __str__(self):
+        return f"{self.invoice.number} - {self.description}"
+
+
+class Payment(models.Model):
+    """Payment received against an issued invoice."""
+
+    class Mode(models.TextChoices):
+        CASH = "CASH", "Cash"
+        UPI = "UPI", "UPI"
+        BANK = "BANK", "Bank"
+        CHEQUE = "CHEQUE", "Cheque"
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name="payments",
+    )
+    amount_paise = models.PositiveIntegerField()
+    payment_date = models.DateField()
+    mode = models.CharField(max_length=10, choices=Mode.choices)
+    reference = models.CharField(max_length=50, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Payment of {self.amount_paise} paise for {self.invoice.number}"
+
+
+

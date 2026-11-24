@@ -12,6 +12,9 @@ from core.models import (
     ProductPrice,
     Order,
     OrderLine,
+    Invoice,
+    InvoiceLine,
+    Payment,
 )
 
 
@@ -188,6 +191,74 @@ class OrderAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("customer__name", "salesman__username")
     inlines = [OrderLineInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class InvoiceLineInline(admin.TabularInline):
+    model = InvoiceLine
+    extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):
+    """Admin configuration for Invoice (read-only with read-only lines)."""
+
+    list_display = (
+        "number",
+        "order",
+        "customer_name",
+        "invoice_date",
+        "supply_type",
+        "total_paise",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status", "supply_type", "fy")
+    search_fields = ("number", "customer_name", "customer_gstin")
+    inlines = [InvoiceLineInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    """Admin configuration for Payment (read-only: no add, change or delete)."""
+
+    list_display = (
+        "id",
+        "invoice",
+        "amount_paise",
+        "payment_date",
+        "mode",
+        "reference",
+        "created_at",
+    )
+    list_filter = ("mode", "payment_date")
+    search_fields = ("invoice__number", "reference")
 
     def has_add_permission(self, request):
         return False

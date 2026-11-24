@@ -131,3 +131,11 @@ MAILERS = {
 # variance flag tolerance, in percent
 VARIANCE_TOLERANCE_PERCENT = 3
 
+# Factory GST and location settings (dummy test values)
+FACTORY_NAME = "Sample Snacks Pvt Ltd"
+FACTORY_GSTIN = "33ABCDE1234F1Z5"
+FACTORY_STATE_CODE = "33"
+FACTORY_STATE_NAME = "Tamil Nadu"
+FACTORY_ADDRESS = "Coimbatore, Tamil Nadu"
+
+

@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Union, List, Tuple
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Max
 from django.utils import timezone
 from core.models import (
     StockLedger,
@@ -17,6 +17,9 @@ from core.models import (
     ProductPrice,
     Order,
     OrderLine,
+    Invoice,
+    InvoiceLine,
+    Payment,
 )
 
 UNIT_CONVERSIONS = {
@@ -475,3 +478,209 @@ def reject_order(order: Order, user=None, reason: str = "") -> Order:
     order.decided_at = timezone.now()
     order.save()
     return order
+
+
+def financial_year(d) -> str:
+    """
+    Return Indian Financial Year for date d (starts 1 April).
+    Examples: date(2027,3,31) -> '2026-27'; date(2027,4,1) -> '2027-28'.
+    """
+    if d.month >= 4:
+        start_year = d.year
+        end_year = d.year + 1
+    else:
+        start_year = d.year - 1
+        end_year = d.year
+    return f"{start_year}-{str(end_year)[-2:]}"
+
+
+def gst_for_line(taxable_paise: int, gst_rate_bp: int, intra: bool) -> tuple:
+    """
+    Calculate GST components for a line in integer paise using ROUND_HALF_UP.
+    intra=True: cgst = sgst = round(taxable * (gst_rate_bp / 2) / 10000), igst = 0.
+    intra=False: igst = round(taxable * gst_rate_bp / 10000), cgst = sgst = 0.
+    """
+    d_taxable = Decimal(taxable_paise)
+    if intra:
+        half_rate = Decimal(gst_rate_bp) / Decimal(2)
+        cgst_dec = (d_taxable * half_rate) / Decimal(10000)
+        cgst = int(cgst_dec.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        sgst = cgst
+        igst = 0
+    else:
+        igst_dec = (d_taxable * Decimal(gst_rate_bp)) / Decimal(10000)
+        igst = int(igst_dec.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        cgst = 0
+        sgst = 0
+    return (cgst, sgst, igst)
+
+
+def create_invoice(order: Order, user, invoice_date=None) -> Invoice:
+    """
+    Create a GST tax invoice for an APPROVED sales order.
+    Sets order.status to INVOICED.
+    """
+    if order.status != Order.Status.APPROVED:
+        raise ValueError(
+            f"Cannot create invoice for order #{order.id} with status '{order.status}'. "
+            "Order must be in APPROVED status."
+        )
+
+    if hasattr(order, "invoice"):
+        raise ValueError(f"Invoice already exists for order #{order.id}.")
+
+    if invoice_date is None:
+        invoice_date = timezone.localdate()
+
+    fy = financial_year(invoice_date)
+    intra = (order.customer.state_code == getattr(settings, "FACTORY_STATE_CODE", "33"))
+    supply_type = Invoice.SupplyType.INTRA if intra else Invoice.SupplyType.INTER
+
+    with transaction.atomic():
+        max_seq = Invoice.objects.filter(fy=fy).aggregate(m=Max("seq"))["m"] or 0
+        seq = max_seq + 1
+        number = f"INV/{fy}/{seq:04d}"
+
+        invoice = Invoice.objects.create(
+            order=order,
+            number=number,
+            fy=fy,
+            seq=seq,
+            invoice_date=invoice_date,
+            customer_name=order.customer.name,
+            customer_gstin=order.customer.gstin,
+            customer_state_code=order.customer.state_code,
+            supply_type=supply_type,
+            created_by=user,
+        )
+
+        tot_taxable = 0
+        tot_cgst = 0
+        tot_sgst = 0
+        tot_igst = 0
+
+        for o_line in order.lines.select_related("product").all():
+            product = o_line.product
+            price_obj = ProductPrice.objects.get(product=product)
+            taxable = o_line.quantity * o_line.unit_price_paise
+            cgst, sgst, igst = gst_for_line(taxable, price_obj.gst_rate_bp, intra)
+
+            InvoiceLine.objects.create(
+                invoice=invoice,
+                product=product,
+                description=product.name,
+                hsn_code=price_obj.hsn_code,
+                quantity=o_line.quantity,
+                unit_price_paise=o_line.unit_price_paise,
+                gst_rate_bp=price_obj.gst_rate_bp,
+                taxable_paise=taxable,
+                cgst_paise=cgst,
+                sgst_paise=sgst,
+                igst_paise=igst,
+            )
+
+            tot_taxable += taxable
+            tot_cgst += cgst
+            tot_sgst += sgst
+            tot_igst += igst
+
+        invoice.taxable_paise = tot_taxable
+        invoice.cgst_paise = tot_cgst
+        invoice.sgst_paise = tot_sgst
+        invoice.igst_paise = tot_igst
+        invoice.total_paise = tot_taxable + tot_cgst + tot_sgst + tot_igst
+        invoice.save()
+
+        order.status = Order.Status.INVOICED
+        order.save()
+
+        return invoice
+
+
+def record_dispatch(invoice: Invoice, user=None) -> None:
+    """
+    Record dispatch of goods for an invoiced order.
+    Deducts stock via StockLedger at weighted average cost.
+    Sets order.status to DISPATCHED.
+    """
+    if invoice.status != Invoice.Status.ISSUED:
+        raise ValueError(
+            f"Cannot record dispatch for invoice #{invoice.number} with status '{invoice.status}'."
+        )
+
+    if invoice.order.status != Order.Status.INVOICED:
+        raise ValueError(
+            f"Cannot record dispatch for order #{invoice.order.id} with status '{invoice.order.status}'. "
+            "Order must be in INVOICED status."
+        )
+
+    with transaction.atomic():
+        for inv_line in invoice.lines.select_related("product").all():
+            product = inv_line.product
+            qty = inv_line.quantity
+            cost = value_for_issue(product, qty)
+
+            StockLedger.objects.create(
+                item=product,
+                movement_type=StockLedger.MovementType.DISPATCH,
+                quantity=-qty,
+                value_paise=-cost,
+                source_type="Invoice",
+                source_id=invoice.id,
+                created_by=user,
+                note=f"Dispatch for Invoice #{invoice.number}",
+            )
+
+        invoice.order.status = Order.Status.DISPATCHED
+        invoice.order.save()
+
+
+def invoice_outstanding(invoice: Invoice) -> int:
+    """Return total outstanding balance in paise for an invoice (total minus payments)."""
+    total_paid = invoice.payments.aggregate(total=Sum("amount_paise"))["total"] or 0
+    return invoice.total_paise - total_paid
+
+
+def customer_outstanding(customer: Customer) -> int:
+    """Return sum of outstanding paise over all ISSUED invoices for a customer."""
+    issued_invoices = Invoice.objects.filter(
+        order__customer=customer,
+        status=Invoice.Status.ISSUED,
+    )
+    return sum(invoice_outstanding(inv) for inv in issued_invoices)
+
+
+def record_payment(
+    invoice: Invoice,
+    amount_paise: int,
+    payment_date,
+    mode: str,
+    reference: str = "",
+    user=None,
+) -> Payment:
+    """
+    Record a customer payment against an ISSUED invoice.
+    Raises ValueError if invoice is not ISSUED, amount <= 0, or amount > outstanding balance.
+    """
+    if invoice.status != Invoice.Status.ISSUED:
+        raise ValueError(
+            f"Cannot record payment for invoice #{invoice.number} with status '{invoice.status}'."
+        )
+
+    if amount_paise <= 0:
+        raise ValueError(f"Payment amount must be greater than 0, got {amount_paise}.")
+
+    outstanding = invoice_outstanding(invoice)
+    if amount_paise > outstanding:
+        raise ValueError(
+            f"Payment amount ({amount_paise} paise) exceeds outstanding balance ({outstanding} paise)."
+        )
+
+    return Payment.objects.create(
+        invoice=invoice,
+        amount_paise=amount_paise,
+        payment_date=payment_date,
+        mode=mode,
+        reference=reference,
+        created_by=user,
+    )
