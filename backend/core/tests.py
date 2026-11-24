@@ -1,8 +1,11 @@
+import os
 from datetime import date
 from decimal import Decimal
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
+import reportlab.rl_config
 
 from core.models import (
     Item,
@@ -46,6 +49,11 @@ from core.services import (
     record_payment,
     cancel_invoice,
     log_audit,
+)
+from core.pdf import (
+    format_rupees,
+    format_rate,
+    build_invoice_pdf,
 )
 
 
@@ -899,3 +907,144 @@ class CreditNoteAndAuditTests(TestCase):
 
         cn = cancel_invoice(invoice, self.admin1, "Return in new FY", note_date=date(2027, 4, 2))
         self.assertEqual(cn.number, "CN/2027-28/0001")
+
+
+class PDFInvoiceTests(TestCase):
+    def setUp(self):
+        # Setup helper: seed benchmark, buy 60 kg flour at Rs 45, run benchmark production run
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+        )
+
+        # Run benchmark production run (actual_output 188)
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+        )
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        User = get_user_model()
+        self.salesman_a = User.objects.create_user(username="salesman_a", password="password")
+        self.salesman_b = User.objects.create_user(username="salesman_b", password="password")
+        self.admin1 = User.objects.create_user(username="admin1", password="password", is_staff=True)
+
+        self.retailer_a = Customer.objects.get(name="Retailer A")
+        self.distributor_b = Customer.objects.get(name="Distributor B")
+
+    def test_format_rupees(self):
+        # format_rupees(paise) -> str, integer arithmetic only, Indian digit grouping, always 2 decimals
+        self.assertEqual(format_rupees(787500), "7,875.00")
+        self.assertEqual(format_rupees(18750), "187.50")
+        self.assertEqual(format_rupees(5), "0.05")
+        self.assertEqual(format_rupees(0), "0.00")
+        self.assertEqual(format_rupees(123456700), "12,34,567.00")
+
+        # Negative numbers raise ValueError
+        with self.assertRaises(ValueError):
+            format_rupees(-1)
+        with self.assertRaises(ValueError):
+            format_rupees(-500)
+
+    def test_format_rate(self):
+        # format_rate(gst_rate_bp) -> str, integer arithmetic
+        self.assertEqual(format_rate(500), "5%")
+        self.assertEqual(format_rate(250), "2.5%")
+        self.assertEqual(format_rate(1800), "18%")
+
+        with self.assertRaises(ValueError):
+            format_rate(-500)
+
+    def test_retailer_a_pdf(self):
+        # Uncompressed stream for raw byte inspection
+        orig_compression = reportlab.rl_config.pageCompression
+        reportlab.rl_config.pageCompression = 0
+        self.addCleanup(setattr, reportlab.rl_config, "pageCompression", orig_compression)
+
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        pdf_bytes = build_invoice_pdf(inv)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertIn(b"INV/2026-27/0001", pdf_bytes)
+        self.assertIn(b"7,875.00", pdf_bytes)
+        self.assertIn(b"187.50", pdf_bytes)
+        self.assertIn(b"2106", pdf_bytes)
+        self.assertIn(b"CGST", pdf_bytes)
+        self.assertIn(b"SGST", pdf_bytes)
+        self.assertNotIn(b"IGST", pdf_bytes)
+
+    def test_distributor_b_pdf(self):
+        # Uncompressed stream for raw byte inspection
+        orig_compression = reportlab.rl_config.pageCompression
+        reportlab.rl_config.pageCompression = 0
+        self.addCleanup(setattr, reportlab.rl_config, "pageCompression", orig_compression)
+
+        order = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 88)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        pdf_bytes = build_invoice_pdf(inv)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertIn(b"IGST", pdf_bytes)
+        self.assertIn(b"220.00", pdf_bytes)
+        self.assertIn(b"4,620.00", pdf_bytes)
+        self.assertNotIn(b"CGST", pdf_bytes)
+
+    def test_cancelled_invoice_pdf(self):
+        # Cancelled invoice PDF contains b"CANCELLED" and credit note number b"CN/2026-27/0001"
+        orig_compression = reportlab.rl_config.pageCompression
+        reportlab.rl_config.pageCompression = 0
+        self.addCleanup(setattr, reportlab.rl_config, "pageCompression", orig_compression)
+
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+        cancel_invoice(inv, self.admin1, "Order cancelled by customer", note_date=date(2026, 11, 24))
+
+        pdf_bytes = build_invoice_pdf(inv)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertIn(b"CANCELLED", pdf_bytes)
+        self.assertIn(b"CN/2026-27/0001", pdf_bytes)
+
+    def test_write_sample_pdf(self):
+        # writes a sample for the repo docs
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        pdf_bytes = build_invoice_pdf(inv)
+
+        sample_path = os.path.normpath(os.path.join(settings.BASE_DIR, "..", "docs", "sample_invoice_retailer_a.pdf"))
+        os.makedirs(os.path.dirname(sample_path), exist_ok=True)
+
+        with open(sample_path, "wb") as f:
+            f.write(pdf_bytes)
+
+        self.assertTrue(os.path.exists(sample_path))
+        self.assertGreater(os.path.getsize(sample_path), 0)
+
