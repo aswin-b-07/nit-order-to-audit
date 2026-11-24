@@ -19,6 +19,8 @@ from core.models import (
     Invoice,
     InvoiceLine,
     Payment,
+    CreditNote,
+    AuditLog,
 )
 from core.services import (
     get_balance,
@@ -42,6 +44,8 @@ from core.services import (
     invoice_outstanding,
     customer_outstanding,
     record_payment,
+    cancel_invoice,
+    log_audit,
 )
 
 
@@ -446,7 +450,7 @@ class OrderApprovalTests(TestCase):
         self.assertEqual(order2.status, Order.Status.SUBMITTED)
 
         # 7. update_order_line to quantity 88, then approve_order succeeds
-        update_order_line(order2, self.murukku, 88)
+        update_order_line(order2, self.murukku, 88, user=self.admin1)
         line2 = order2.lines.get(product=self.murukku)
         self.assertEqual(line2.quantity, 88)
         approve_order(order2, user=self.admin1)
@@ -467,7 +471,7 @@ class OrderApprovalTests(TestCase):
 
         # 9. update_order_line on an APPROVED order raises ValueError
         with self.assertRaises(ValueError):
-            update_order_line(order1, self.murukku, 100)
+            update_order_line(order1, self.murukku, 100, user=self.admin1)
 
     def test_order_placement_validation_errors(self):
         # place_order with quantity 0 raises ValueError
@@ -588,16 +592,16 @@ class InvoiceDispatchPaymentTests(TestCase):
         # payments: record_payment(invoice A, 400000, any date, "UPI") works;
         # invoice_outstanding is 387500; customer_outstanding(Retailer A) is 387500;
         # a payment of 387501 raises ValueError; a payment of 0 raises ValueError
-        pay = record_payment(inv, 400000, date(2026, 11, 25), Payment.Mode.UPI)
+        pay = record_payment(inv, 400000, date(2026, 11, 25), Payment.Mode.UPI, user=self.admin1)
         self.assertIsNotNone(pay.id)
         self.assertEqual(invoice_outstanding(inv), 387500)
         self.assertEqual(customer_outstanding(self.retailer_a), 387500)
 
         with self.assertRaises(ValueError):
-            record_payment(inv, 387501, date(2026, 11, 26), Payment.Mode.BANK)
+            record_payment(inv, 387501, date(2026, 11, 26), Payment.Mode.BANK, user=self.admin1)
 
         with self.assertRaises(ValueError):
-            record_payment(inv, 0, date(2026, 11, 26), Payment.Mode.CASH)
+            record_payment(inv, 0, date(2026, 11, 26), Payment.Mode.CASH, user=self.admin1)
 
     def test_distributor_b_interstate_invoice(self):
         # Distributor B: place_order 120, approve_order raises ValueError containing "32";
@@ -605,7 +609,6 @@ class InvoiceDispatchPaymentTests(TestCase):
         # create_invoice(..., invoice_date=date(2026,11,24)):
         # number "INV/2026-27/0002", supply_type INTER, taxable_paise 440000,
         # igst_paise 22000, cgst_paise 0, sgst_paise 0, total_paise 462000
-        # (Note: we first invoice order1 for Retailer A to get seq 1)
         order_a = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
         approve_order(order_a, self.admin1)
         create_invoice(order_a, self.admin1, invoice_date=date(2026, 11, 24))
@@ -616,7 +619,7 @@ class InvoiceDispatchPaymentTests(TestCase):
             approve_order(order_b, self.admin1)
         self.assertIn("32", str(ctx.exception))
 
-        update_order_line(order_b, self.murukku, 88)
+        update_order_line(order_b, self.murukku, 88, user=self.admin1)
         approve_order(order_b, self.admin1)
         inv_b = create_invoice(order_b, self.admin1, invoice_date=date(2026, 11, 24))
 
@@ -672,3 +675,227 @@ class InvoiceDispatchPaymentTests(TestCase):
         approve_order(order, self.admin1)
         inv = create_invoice(order, self.admin1, invoice_date=date(2027, 4, 1))
         self.assertEqual(inv.number, "INV/2027-28/0001")
+
+
+class CreditNoteAndAuditTests(TestCase):
+    def setUp(self):
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+        )
+
+        # Run benchmark production run (actual_output 188)
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+        )
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        User = get_user_model()
+        self.salesman_a = User.objects.create_user(username="salesman_a", password="password")
+        self.salesman_b = User.objects.create_user(username="salesman_b", password="password")
+        self.admin1 = User.objects.create_user(username="admin1", password="password", is_staff=True)
+
+        self.retailer_a = Customer.objects.get(name="Retailer A")
+        self.distributor_b = Customer.objects.get(name="Distributor B")
+
+    def test_cancel_invoice_after_dispatch(self):
+        # Retailer A order 150 -> approve -> invoice (invoice_date date(2026,11,24)) -> dispatch (stock 88)
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+        record_dispatch(invoice, self.admin1)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # cancel_invoice(invoice, admin1, "Wrong customer", note_date=date(2026,11,24))
+        cn = cancel_invoice(invoice, self.admin1, "Wrong customer", note_date=date(2026, 11, 24))
+
+        # credit note number "CN/2026-27/0001"; amounts taxable 750000, cgst 18750, sgst 18750, igst 0, total 787500
+        self.assertEqual(cn.number, "CN/2026-27/0001")
+        self.assertEqual(cn.taxable_paise, 750000)
+        self.assertEqual(cn.cgst_paise, 18750)
+        self.assertEqual(cn.sgst_paise, 18750)
+        self.assertEqual(cn.igst_paise, 0)
+        self.assertEqual(cn.total_paise, 787500)
+
+        # invoice.status CANCELLED; order.status CANCELLED; Murukku 200 g balance back to 238
+        invoice.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(invoice.status, Invoice.Status.CANCELLED)
+        self.assertEqual(order.status, Order.Status.CANCELLED)
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        # exactly one SALE_RETURN ledger row with quantity +150 and value_paise +255567, source_type "CreditNote"
+        sale_returns = StockLedger.objects.filter(movement_type=StockLedger.MovementType.SALE_RETURN)
+        self.assertEqual(sale_returns.count(), 1)
+        sr = sale_returns.first()
+        self.assertEqual(sr.quantity, 150)
+        self.assertEqual(sr.value_paise, 255567)
+        self.assertEqual(sr.source_type, "CreditNote")
+        self.assertEqual(sr.source_id, cn.id)
+
+        # original DISPATCH row still exists unchanged
+        dispatch_rows = StockLedger.objects.filter(movement_type=StockLedger.MovementType.DISPATCH, source_id=invoice.id)
+        self.assertEqual(dispatch_rows.count(), 1)
+        self.assertEqual(dispatch_rows.first().quantity, -150)
+
+        # customer_outstanding(Retailer A) is 0
+        self.assertEqual(customer_outstanding(self.retailer_a), 0)
+
+    def test_cancel_invoice_before_dispatch(self):
+        # Cancel before dispatch: no new ledger rows, stock stays 238, status CANCELLED
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 100)])
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        count_before = StockLedger.objects.count()
+        cancel_invoice(invoice, self.admin1, "Order cancelled before dispatch")
+
+        self.assertEqual(StockLedger.objects.count(), count_before)
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        invoice.refresh_from_db()
+        order.refresh_from_db()
+        self.assertEqual(invoice.status, Invoice.Status.CANCELLED)
+        self.assertEqual(order.status, Order.Status.CANCELLED)
+
+    def test_cancel_invoice_validation_errors(self):
+        # cancel_invoice raises ValueError when: the invoice has a payment; the invoice is already cancelled; the reason is empty
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 50)])
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1)
+
+        # Record payment
+        record_payment(invoice, 10000, date(2026, 11, 25), Payment.Mode.UPI, user=self.admin1)
+        with self.assertRaises(ValueError):
+            cancel_invoice(invoice, self.admin1, "Trying to cancel with payment")
+
+        # Second invoice for already cancelled test
+        order2 = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 20)])
+        approve_order(order2, self.admin1)
+        invoice2 = create_invoice(order2, self.admin1)
+
+        # Empty reason
+        with self.assertRaises(ValueError):
+            cancel_invoice(invoice2, self.admin1, "")
+        with self.assertRaises(ValueError):
+            cancel_invoice(invoice2, self.admin1, "   ")
+
+        # Valid cancellation
+        cancel_invoice(invoice2, self.admin1, "First valid cancellation")
+
+        # Already cancelled
+        with self.assertRaises(ValueError):
+            cancel_invoice(invoice2, self.admin1, "Already cancelled")
+
+    def test_post_cancellation_actions_disallowed(self):
+        # after cancelling, record_payment and record_dispatch on that invoice raise ValueError
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 30)])
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1)
+        cancel_invoice(invoice, self.admin1, "Cancelled order")
+
+        with self.assertRaises(ValueError):
+            record_payment(invoice, 5000, date(2026, 11, 25), Payment.Mode.CASH, user=self.admin1)
+
+        with self.assertRaises(ValueError):
+            record_dispatch(invoice, self.admin1)
+
+    def test_audit_logs(self):
+        # Audit: after create_invoice there is an AuditLog row with action "INVOICE_CREATED", user admin1, model_name "Invoice", object_id = invoice id;
+        # after cancel there is one with action "INVOICE_CANCELLED" and "Wrong customer" in details;
+        # update_order_line changing price 5000 -> 4800 and quantity 150 -> 100 creates an "ORDER_LINE_EDITED" row whose details contain both "5000" and "4800";
+        # record_production_run creates "PRODUCTION_RUN_CREATED"
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+
+        update_order_line(order, self.murukku, 100, unit_price_paise=4800, user=self.admin1)
+        edit_log = AuditLog.objects.filter(action="ORDER_LINE_EDITED").last()
+        self.assertIsNotNone(edit_log)
+        self.assertIn("5000", edit_log.details)
+        self.assertIn("4800", edit_log.details)
+        self.assertIn("150", edit_log.details)
+        self.assertIn("100", edit_log.details)
+
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+
+        inv_log = AuditLog.objects.filter(action="INVOICE_CREATED", object_id=invoice.id).first()
+        self.assertIsNotNone(inv_log)
+        self.assertEqual(inv_log.user, self.admin1)
+        self.assertEqual(inv_log.model_name, "Invoice")
+        self.assertEqual(inv_log.details, invoice.number)
+
+        cancel_invoice(invoice, self.admin1, "Wrong customer", note_date=date(2026, 11, 24))
+        cancel_log = AuditLog.objects.filter(action="INVOICE_CANCELLED", object_id=invoice.id).first()
+        self.assertIsNotNone(cancel_log)
+        self.assertIn("Wrong customer", cancel_log.details)
+
+        prod_log = AuditLog.objects.filter(action="PRODUCTION_RUN_CREATED").first()
+        self.assertIsNotNone(prod_log)
+
+    def test_failed_dispatch_leaves_no_audit_log(self):
+        # a dispatch that fails for short stock (competing-orders case) leaves NO new AuditLog row for it
+        order1 = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order1, self.admin1)
+        inv1 = create_invoice(order1, self.admin1, invoice_date=date(2026, 11, 24))
+
+        order2 = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 150)])
+        approve_order(order2, self.admin1)
+        inv2 = create_invoice(order2, self.admin1, invoice_date=date(2026, 11, 24))
+
+        record_dispatch(inv1, self.admin1)
+        audit_count_before = AuditLog.objects.count()
+
+        with self.assertRaises(ValueError):
+            record_dispatch(inv2, self.admin1)
+
+        self.assertEqual(AuditLog.objects.count(), audit_count_before)
+
+    def test_audit_log_append_only(self):
+        # editing or deleting an AuditLog row raises an error
+        log = AuditLog.objects.create(
+            user=self.admin1,
+            action="TEST_ACTION",
+            model_name="TestModel",
+            object_id=1,
+            details="initial details",
+        )
+
+        log.details = "modified details"
+        with self.assertRaises(RuntimeError):
+            log.save()
+
+        with self.assertRaises(RuntimeError):
+            log.delete()
+
+    def test_second_credit_note_new_financial_year(self):
+        # second credit note of a new FY: an invoice created on date(2027,4,1) and cancelled with note_date=date(2027,4,2) gets "CN/2027-28/0001"
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 20)])
+        approve_order(order, self.admin1)
+        invoice = create_invoice(order, self.admin1, invoice_date=date(2027, 4, 1))
+
+        cn = cancel_invoice(invoice, self.admin1, "Return in new FY", note_date=date(2027, 4, 2))
+        self.assertEqual(cn.number, "CN/2027-28/0001")

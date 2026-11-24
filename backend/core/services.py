@@ -20,6 +20,8 @@ from core.models import (
     Invoice,
     InvoiceLine,
     Payment,
+    CreditNote,
+    AuditLog,
 )
 
 UNIT_CONVERSIONS = {
@@ -35,6 +37,17 @@ VALID_PURCHASE_UNITS = {
     "ml": {"l", "ml"},
     "pcs": {"pcs"},
 }
+
+
+def log_audit(user, action: str, obj, details: str = "") -> AuditLog:
+    """Create an append-only audit log entry."""
+    return AuditLog.objects.create(
+        user=user,
+        action=action,
+        model_name=type(obj).__name__,
+        object_id=obj.pk,
+        details=details,
+    )
 
 
 def get_balance(item: Union[Item, int]) -> int:
@@ -173,6 +186,7 @@ def record_purchase(
             created_by=user,
             note=f"Purchase from {supplier.name}",
         )
+        log_audit(user, "PURCHASE_RECORDED", purchase)
         return purchase
 
 
@@ -321,6 +335,7 @@ def record_production_run(
         run.material_cost_paise = total_material_cost_paise
         run.save()
 
+        log_audit(user, "PRODUCTION_RUN_CREATED", run)
         return run
 
 
@@ -424,12 +439,23 @@ def update_order_line(
     except OrderLine.DoesNotExist:
         raise ValueError(f"Product '{product.name}' is not in order #{order.id}.")
 
-    line.quantity = quantity
-    if unit_price_paise is not None:
-        if unit_price_paise < 0:
-            raise ValueError("unit_price_paise cannot be negative.")
-        line.unit_price_paise = unit_price_paise
-    line.save()
+    old_qty = line.quantity
+    old_price = line.unit_price_paise
+    new_qty = quantity
+    new_price = unit_price_paise if unit_price_paise is not None else old_price
+
+    if unit_price_paise is not None and unit_price_paise < 0:
+        raise ValueError("unit_price_paise cannot be negative.")
+
+    details = f"{product.name}: qty {old_qty}->{new_qty}, price {old_price}->{new_price}"
+
+    with transaction.atomic():
+        line.quantity = new_qty
+        if unit_price_paise is not None:
+            line.unit_price_paise = new_price
+        line.save()
+        log_audit(user, "ORDER_LINE_EDITED", order, details=details)
+
     return line
 
 
@@ -451,10 +477,13 @@ def approve_order(order: Order, user=None) -> Order:
         shortage_msgs = [f"{r['product'].name} short by {r['shortage']}" for r in shortages]
         raise ValueError(f"Insufficient stock: {', '.join(shortage_msgs)}")
 
-    order.status = Order.Status.APPROVED
-    order.decided_by = user
-    order.decided_at = timezone.now()
-    order.save()
+    with transaction.atomic():
+        order.status = Order.Status.APPROVED
+        order.decided_by = user
+        order.decided_at = timezone.now()
+        order.save()
+        log_audit(user, "ORDER_APPROVED", order)
+
     return order
 
 
@@ -472,11 +501,14 @@ def reject_order(order: Order, user=None, reason: str = "") -> Order:
     if not reason or not reason.strip():
         raise ValueError("Reject reason must not be empty.")
 
-    order.status = Order.Status.REJECTED
-    order.reject_reason = reason.strip()
-    order.decided_by = user
-    order.decided_at = timezone.now()
-    order.save()
+    with transaction.atomic():
+        order.status = Order.Status.REJECTED
+        order.reject_reason = reason.strip()
+        order.decided_by = user
+        order.decided_at = timezone.now()
+        order.save()
+        log_audit(user, "ORDER_REJECTED", order, details=reason.strip())
+
     return order
 
 
@@ -594,6 +626,8 @@ def create_invoice(order: Order, user, invoice_date=None) -> Invoice:
         order.status = Order.Status.INVOICED
         order.save()
 
+        log_audit(user, "INVOICE_CREATED", invoice, details=invoice.number)
+
         return invoice
 
 
@@ -633,6 +667,8 @@ def record_dispatch(invoice: Invoice, user=None) -> None:
 
         invoice.order.status = Order.Status.DISPATCHED
         invoice.order.save()
+
+        log_audit(user, "DISPATCH_RECORDED", invoice)
 
 
 def invoice_outstanding(invoice: Invoice) -> int:
@@ -676,11 +712,92 @@ def record_payment(
             f"Payment amount ({amount_paise} paise) exceeds outstanding balance ({outstanding} paise)."
         )
 
-    return Payment.objects.create(
-        invoice=invoice,
-        amount_paise=amount_paise,
-        payment_date=payment_date,
-        mode=mode,
-        reference=reference,
-        created_by=user,
-    )
+    with transaction.atomic():
+        payment = Payment.objects.create(
+            invoice=invoice,
+            amount_paise=amount_paise,
+            payment_date=payment_date,
+            mode=mode,
+            reference=reference,
+            created_by=user,
+        )
+        log_audit(user, "PAYMENT_RECORDED", payment, details=str(amount_paise))
+        return payment
+
+
+def cancel_invoice(
+    invoice: Invoice,
+    user,
+    reason: str,
+    note_date=None,
+) -> CreditNote:
+    """
+    Cancel an issued invoice by generating a CreditNote and reversing any stock dispatches.
+    Raises ValueError if invoice is not ISSUED, reason is empty, or invoice has payments.
+    """
+    if invoice.status != Invoice.Status.ISSUED:
+        raise ValueError(
+            f"Cannot cancel invoice #{invoice.number} with status '{invoice.status}'."
+        )
+
+    if not reason or not reason.strip():
+        raise ValueError("Cancellation reason must not be empty.")
+
+    if invoice.payments.exists():
+        raise ValueError(
+            f"Cannot cancel invoice #{invoice.number} because payments have already been recorded."
+        )
+
+    if note_date is None:
+        note_date = timezone.localdate()
+
+    fy = financial_year(note_date)
+
+    with transaction.atomic():
+        max_seq = CreditNote.objects.filter(fy=fy).aggregate(m=Max("seq"))["m"] or 0
+        seq = max_seq + 1
+        number = f"CN/{fy}/{seq:04d}"
+
+        credit_note = CreditNote.objects.create(
+            invoice=invoice,
+            number=number,
+            fy=fy,
+            seq=seq,
+            note_date=note_date,
+            reason=reason.strip(),
+            taxable_paise=invoice.taxable_paise,
+            cgst_paise=invoice.cgst_paise,
+            sgst_paise=invoice.sgst_paise,
+            igst_paise=invoice.igst_paise,
+            total_paise=invoice.total_paise,
+            created_by=user,
+        )
+
+        # Reverse any dispatch ledger movements associated with this invoice
+        dispatch_rows = StockLedger.objects.filter(
+            movement_type=StockLedger.MovementType.DISPATCH,
+            source_type="Invoice",
+            source_id=invoice.id,
+        )
+
+        for row in dispatch_rows:
+            StockLedger.objects.create(
+                item=row.item,
+                movement_type=StockLedger.MovementType.SALE_RETURN,
+                quantity=-row.quantity,
+                value_paise=-row.value_paise,
+                source_type="CreditNote",
+                source_id=credit_note.id,
+                created_by=user,
+                note=f"Reversal for Invoice #{invoice.number}",
+            )
+
+        invoice.status = Invoice.Status.CANCELLED
+        invoice.save()
+
+        invoice.order.status = Order.Status.CANCELLED
+        invoice.order.save()
+
+        log_audit(user, "INVOICE_CANCELLED", invoice, details=reason.strip())
+
+        return credit_note

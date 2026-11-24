@@ -15,6 +15,8 @@ from core.models import (
     Invoice,
     InvoiceLine,
     Payment,
+    CreditNote,
+    AuditLog,
 )
 
 
@@ -259,6 +261,57 @@ class PaymentAdmin(admin.ModelAdmin):
     )
     list_filter = ("mode", "payment_date")
     search_fields = ("invoice__number", "reference")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CreditNote)
+class CreditNoteAdmin(admin.ModelAdmin):
+    """Admin configuration for CreditNote (read-only: no add, change or delete)."""
+
+    list_display = (
+        "number",
+        "invoice",
+        "note_date",
+        "total_paise",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("fy", "note_date")
+    search_fields = ("number", "invoice__number", "reason")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    """Admin configuration for AuditLog (read-only: no add, change or delete)."""
+
+    list_display = (
+        "id",
+        "action",
+        "model_name",
+        "object_id",
+        "user",
+        "details",
+        "created_at",
+    )
+    list_filter = ("action", "model_name", "created_at")
+    search_fields = ("details", "action", "model_name")
 
     def has_add_permission(self, request):
         return False

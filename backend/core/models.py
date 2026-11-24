@@ -36,6 +36,9 @@ class StockLedger(models.Model):
         PROD_OUTPUT = "PROD_OUTPUT", "Production Output"
         DISPATCH = "DISPATCH", "Dispatch"
         ADJUSTMENT = "ADJUSTMENT", "Adjustment"
+        SALE_RETURN = "SALE_RETURN", "Sales return / cancellation"
+
+    MOVEMENT_CHOICES = MovementType.choices
 
     item = models.ForeignKey(
         Item,
@@ -244,6 +247,7 @@ class Order(models.Model):
         REJECTED = "REJECTED", "Rejected"
         INVOICED = "INVOICED", "Invoiced"
         DISPATCHED = "DISPATCHED", "Dispatched"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     customer = models.ForeignKey(
         Customer,
@@ -400,6 +404,69 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"Payment of {self.amount_paise} paise for {self.invoice.number}"
+
+
+class CreditNote(models.Model):
+    """Credit note issued to cancel an invoice."""
+
+    invoice = models.OneToOneField(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name="credit_note",
+    )
+    number = models.CharField(max_length=30, unique=True)
+    fy = models.CharField(max_length=7)
+    seq = models.PositiveIntegerField()
+    note_date = models.DateField()
+    reason = models.CharField(max_length=200)
+    taxable_paise = models.IntegerField()
+    cgst_paise = models.IntegerField()
+    sgst_paise = models.IntegerField()
+    igst_paise = models.IntegerField()
+    total_paise = models.IntegerField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("fy", "seq")
+
+    def __str__(self):
+        return f"CreditNote {self.number}"
+
+
+class AuditLog(models.Model):
+    """Append-only audit log tracking critical operational events."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    action = models.CharField(max_length=30)
+    model_name = models.CharField(max_length=30)
+    object_id = models.PositiveIntegerField()
+    details = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        # Append-only: prevent updating existing rows
+        if self.pk is not None:
+            raise RuntimeError("AuditLog rows cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # Append-only: prevent deleting rows
+        raise RuntimeError("AuditLog rows cannot be deleted.")
+
+    def __str__(self):
+        return f"AuditLog {self.action} on {self.model_name} #{self.object_id}"
+
 
 
 
