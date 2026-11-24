@@ -17,6 +17,7 @@ from core.models import (
     Payment,
     CreditNote,
     AuditLog,
+    Expense,
 )
 
 
@@ -56,6 +57,7 @@ class StockLedgerAdmin(admin.ModelAdmin):
         return False
 
 
+
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
     """Admin configuration for Supplier (editable)."""
@@ -91,6 +93,7 @@ class PurchaseAdmin(admin.ModelAdmin):
         return False
 
 
+
 class BOMLineInline(admin.TabularInline):
     model = BOMLine
     extra = 1
@@ -116,6 +119,7 @@ class ProductionRunLineInline(admin.TabularInline):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 
 @admin.register(ProductionRun)
@@ -144,6 +148,7 @@ class ProductionRunAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 
 @admin.register(Customer)
@@ -177,6 +182,7 @@ class OrderLineInline(admin.TabularInline):
         return False
 
 
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     """Admin configuration for Order (read-only with read-only lines)."""
@@ -204,6 +210,7 @@ class OrderAdmin(admin.ModelAdmin):
         return False
 
 
+
 class InvoiceLineInline(admin.TabularInline):
     model = InvoiceLine
     extra = 0
@@ -216,6 +223,7 @@ class InvoiceLineInline(admin.TabularInline):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 
 @admin.register(Invoice)
@@ -246,6 +254,7 @@ class InvoiceAdmin(admin.ModelAdmin):
         return False
 
 
+
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
     """Admin configuration for Payment (read-only: no add, change or delete)."""
@@ -270,6 +279,7 @@ class PaymentAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 
 @admin.register(CreditNote)
@@ -297,6 +307,7 @@ class CreditNoteAdmin(admin.ModelAdmin):
         return False
 
 
+
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
     """Admin configuration for AuditLog (read-only: no add, change or delete)."""
@@ -321,3 +332,31 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(Expense)
+class ExpenseAdmin(admin.ModelAdmin):
+    """Admin configuration for Expense (read-only: no add, change or delete)."""
+
+    list_display = (
+        "id",
+        "run",
+        "kind",
+        "amount_paise",
+        "note",
+        "created_by",
+        "created_at",
+    )
+    list_filter = ("kind", "created_at")
+    search_fields = ("note", "run__id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+

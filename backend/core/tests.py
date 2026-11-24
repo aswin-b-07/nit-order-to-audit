@@ -24,6 +24,7 @@ from core.models import (
     Payment,
     CreditNote,
     AuditLog,
+    Expense,
 )
 from core.services import (
     get_balance,
@@ -49,6 +50,9 @@ from core.services import (
     record_payment,
     cancel_invoice,
     log_audit,
+    per_unit_paise,
+    record_expense,
+    run_costing,
 )
 from core.pdf import (
     format_rupees,
@@ -1047,4 +1051,116 @@ class PDFInvoiceTests(TestCase):
 
         self.assertTrue(os.path.exists(sample_path))
         self.assertGreater(os.path.getsize(sample_path), 0)
+
+
+class ExpenseAndCostingTests(TestCase):
+    def setUp(self):
+        # Setup: seed benchmark, buy 60 kg flour at Rs 45, benchmark production run, user admin1
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+        )
+
+        User = get_user_model()
+        self.admin1 = User.objects.create_user(username="admin1", password="password", is_staff=True)
+
+        self.issued_lines = {
+            self.flour: {"qty": 40000},
+            self.oil: {"qty": 10500},
+            self.spice: {"qty": 1200},
+            self.pouch: {"qty": 194, "wastage": 6},
+            self.carton: {"qty": 9},
+        }
+
+        # Benchmark production run (actual_output 188)
+        self.run = record_production_run(
+            self.bom,
+            188,
+            self.issued_lines,
+            user=self.admin1,
+        )
+
+    def test_per_unit_paise(self):
+        self.assertEqual(per_unit_paise(585500, 188), 3114)
+        self.assertEqual(per_unit_paise(5, 2), 3)
+        with self.assertRaises(ValueError):
+            per_unit_paise(10, 0)
+        with self.assertRaises(ValueError):
+            per_unit_paise(10, -5)
+
+    def test_run_costing_with_expenses(self):
+        record_expense(self.run, "LABOUR", 120000, note="Shift labor", user=self.admin1)
+        record_expense(self.run, "GAS_POWER", 60000, note="Gas consumption", user=self.admin1)
+
+        costing = run_costing(self.run)
+        self.assertEqual(costing["material_cost_paise"], 405500)
+        self.assertEqual(costing["overhead_paise"], 180000)
+        self.assertEqual(costing["total_cost_paise"], 585500)
+        self.assertEqual(costing["good_packets"], 188)
+        self.assertEqual(costing["cost_per_packet_paise"], 3114)
+        self.assertEqual(costing["selling_price_paise"], 5000)
+        self.assertEqual(costing["margin_per_packet_paise"], 1886)
+        self.assertEqual(costing["margin_bp"], 3772)
+        self.assertEqual(costing["overhead_by_kind"], {"LABOUR": 120000, "GAS_POWER": 60000})
+
+    def test_run_costing_no_expenses(self):
+        costing = run_costing(self.run)
+        self.assertEqual(costing["overhead_paise"], 0)
+        self.assertEqual(costing["total_cost_paise"], 405500)
+        self.assertEqual(costing["cost_per_packet_paise"], 2157)
+
+    def test_record_expense_validation_errors(self):
+        expense_count_before = Expense.objects.count()
+        audit_count_before = AuditLog.objects.count()
+
+        with self.assertRaises(ValueError):
+            record_expense(self.run, "LABOUR", 0, user=self.admin1)
+
+        with self.assertRaises(ValueError):
+            record_expense(self.run, "LABOUR", -100, user=self.admin1)
+
+        with self.assertRaises(ValueError):
+            record_expense(self.run, "UNKNOWN_KIND", 5000, user=self.admin1)
+
+        self.assertEqual(Expense.objects.count(), expense_count_before)
+        self.assertEqual(AuditLog.objects.count(), audit_count_before)
+
+    def test_record_expense_creates_audit_log(self):
+        exp = record_expense(self.run, "LABOUR", 120000, note="Factory shift", user=self.admin1)
+        audit = AuditLog.objects.filter(action="EXPENSE_RECORDED", object_id=exp.id).first()
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit.user, self.admin1)
+        self.assertEqual(audit.model_name, "Expense")
+        self.assertIn("LABOUR", audit.details)
+        self.assertIn("120000", audit.details)
+
+    def test_run_costing_zero_actual_output(self):
+        # A run with actual_output 0 (same issued quantities, actual_output 0)
+        zero_run = record_production_run(
+            self.bom,
+            0,
+            self.issued_lines,
+            user=self.admin1,
+        )
+        costing = run_costing(zero_run)
+        self.assertIsNone(costing["cost_per_packet_paise"])
+        self.assertIsNone(costing["margin_per_packet_paise"])
+        self.assertIsNone(costing["margin_bp"])
+
 

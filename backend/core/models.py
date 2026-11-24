@@ -468,5 +468,37 @@ class AuditLog(models.Model):
         return f"AuditLog {self.action} on {self.model_name} #{self.object_id}"
 
 
+class Expense(models.Model):
+    """Overhead expense associated with a production run."""
+
+    class Kind(models.TextChoices):
+        LABOUR = "LABOUR", "Labour"
+        GAS_POWER = "GAS_POWER", "Gas and power"
+        OTHER = "OTHER", "Other"
+
+    run = models.ForeignKey(
+        ProductionRun,
+        on_delete=models.PROTECT,
+        related_name="expenses",
+    )
+    kind = models.CharField(
+        max_length=20,
+        choices=Kind.choices,
+    )
+    amount_paise = models.PositiveIntegerField(help_text="Expense amount in paise")
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.kind}: {self.amount_paise} paise (Run #{self.run_id})"
+
+
+
 
 

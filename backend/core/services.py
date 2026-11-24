@@ -22,6 +22,7 @@ from core.models import (
     Payment,
     CreditNote,
     AuditLog,
+    Expense,
 )
 
 UNIT_CONVERSIONS = {
@@ -801,3 +802,93 @@ def cancel_invoice(
         log_audit(user, "INVOICE_CANCELLED", invoice, details=reason.strip())
 
         return credit_note
+
+
+def per_unit_paise(total_paise: int, quantity: int) -> int:
+    """
+    Calculate per-unit cost in paise using Decimal ROUND_HALF_UP.
+    Raises ValueError if quantity <= 0.
+    """
+    if quantity <= 0:
+        raise ValueError(f"Quantity must be greater than 0, got {quantity}.")
+    res = (Decimal(total_paise) / Decimal(quantity)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    return int(res)
+
+
+def record_expense(run, kind: str, amount_paise: int, note: str = "", user=None) -> Expense:
+    """
+    Record an overhead expense against a production run.
+    Raises ValueError if kind is invalid or amount_paise <= 0.
+    """
+    valid_kinds = {Expense.Kind.LABOUR, Expense.Kind.GAS_POWER, Expense.Kind.OTHER}
+    if kind not in valid_kinds:
+        raise ValueError(f"Invalid expense kind '{kind}'. Must be one of: {', '.join(sorted(valid_kinds))}.")
+
+    if amount_paise <= 0:
+        raise ValueError(f"amount_paise must be positive, got {amount_paise}.")
+
+    with transaction.atomic():
+        expense = Expense.objects.create(
+            run=run,
+            kind=kind,
+            amount_paise=amount_paise,
+            note=note,
+            created_by=user,
+        )
+        log_audit(user, "EXPENSE_RECORDED", expense, details=f"{kind}: {amount_paise} paise")
+
+    return expense
+
+
+def run_costing(run: ProductionRun) -> dict:
+    """
+    Calculate costing and margins for a production run.
+    Returns a dictionary of cost metrics and breakdown of overhead expenses by kind.
+    """
+    material_cost_paise = run.material_cost_paise
+
+    overhead_by_kind = {}
+    overhead_paise = 0
+    for exp in run.expenses.all():
+        overhead_paise += exp.amount_paise
+        overhead_by_kind[exp.kind] = overhead_by_kind.get(exp.kind, 0) + exp.amount_paise
+
+    total_cost_paise = material_cost_paise + overhead_paise
+    good_packets = run.actual_output
+
+    if good_packets > 0:
+        cost_per_packet_paise = per_unit_paise(total_cost_paise, good_packets)
+    else:
+        cost_per_packet_paise = None
+
+    price_obj = ProductPrice.objects.filter(product=run.bom.product).first()
+    selling_price_paise = price_obj.price_paise if price_obj else None
+
+    if selling_price_paise is not None and cost_per_packet_paise is not None:
+        margin_per_packet_paise = selling_price_paise - cost_per_packet_paise
+        if selling_price_paise > 0:
+            margin_bp = int(
+                (Decimal(margin_per_packet_paise * 10000) / Decimal(selling_price_paise)).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )
+            )
+        else:
+            margin_bp = None
+    else:
+        margin_per_packet_paise = None
+        margin_bp = None
+
+    return {
+        "material_cost_paise": material_cost_paise,
+        "overhead_paise": overhead_paise,
+        "total_cost_paise": total_cost_paise,
+        "good_packets": good_packets,
+        "cost_per_packet_paise": cost_per_packet_paise,
+        "selling_price_paise": selling_price_paise,
+        "margin_per_packet_paise": margin_per_packet_paise,
+        "margin_bp": margin_bp,
+        "overhead_by_kind": overhead_by_kind,
+    }
+
