@@ -1574,12 +1574,42 @@ class ReportsBaseTest(TestCase):
         self.assertEqual(len(reader), 3)
 
     def test_csv_stock_summary_display_units(self):
+        import csv as csv_mod
         report = stock_summary()
-        csv_text = to_csv_stock_summary(report)
-        # Flour closing: 120000 g → 120.000 kg
-        self.assertIn("120.000", csv_text)
-        # Oil closing: 19500 ml → 19.500 L
-        self.assertIn("19.500", csv_text)
+        # Verify raw rows stay unchanged (integers in base units)
+        by_name_raw = {r[0]: r for r in report["rows"]}
+        self.assertEqual(by_name_raw["Flour"][2], "g")
+        self.assertEqual(by_name_raw["Flour"][7], 120000)
+        self.assertEqual(by_name_raw["Cooking oil"][2], "ml")
+        self.assertEqual(by_name_raw["Cooking oil"][7], 19500)
+        self.assertEqual(by_name_raw["Murukku 200 g"][2], "pcs")
+        self.assertEqual(by_name_raw["Murukku 200 g"][7], 88)
+
+        # Both to_csv and to_csv_stock_summary should display unit labels and converted numbers
+        for csv_fn in (to_csv, to_csv_stock_summary):
+            csv_text = csv_fn(report)
+            reader = list(csv_mod.reader(csv_text.splitlines()))
+            headers = reader[0]
+            item_idx = headers.index("Item")
+            unit_idx = headers.index("Unit")
+            closing_idx = headers.index("Closing")
+
+            by_name_csv = {row[item_idx]: row for row in reader[1:] if len(row) > max(unit_idx, closing_idx)}
+
+            # Flour closing "120.000" with unit "kg"
+            flour_row = by_name_csv["Flour"]
+            self.assertEqual(flour_row[unit_idx], "kg")
+            self.assertEqual(flour_row[closing_idx], "120.000")
+
+            # Oil closing "19.500" with unit "L"
+            oil_row = by_name_csv["Cooking oil"]
+            self.assertEqual(oil_row[unit_idx], "L")
+            self.assertEqual(oil_row[closing_idx], "19.500")
+
+            # Murukku closing "88" with unit "pcs"
+            murukku_row = by_name_csv["Murukku 200 g"]
+            self.assertEqual(murukku_row[unit_idx], "pcs")
+            self.assertEqual(murukku_row[closing_idx], "88")
 
 
 # ---------------------------------------------------------------------------
@@ -1699,5 +1729,63 @@ class ReportsCancelledInvoiceTest(TestCase):
         cn = report["credit_notes"]
         self.assertEqual(cn["count"], 1)
         self.assertEqual(cn["total_paise"], 787500)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b-fix: run_benchmark command test
+# ---------------------------------------------------------------------------
+
+class RunBenchmarkCommandTest(TestCase):
+    def test_run_benchmark_command(self):
+        import io
+        # First seed initial benchmark data
+        call_command("seed_benchmark")
+
+        out = io.StringIO()
+        call_command("run_benchmark", stdout=out)
+        output = out.getvalue()
+
+        # Assert output contains required step lines and balances
+        self.assertIn("1. Purchase 60 kg flour at Rs 45/kg.", output)
+        self.assertIn("Distributor B: shortage of 32 packets (88 available)", output)
+        self.assertIn("flour 120000 g", output)
+        self.assertIn("oil 19500 ml", output)
+        self.assertIn("pouches 306", output)
+        self.assertIn("cartons 21", output)
+        self.assertIn("finished goods 88", output)
+        self.assertIn("invoice total 787500", output)
+        self.assertIn("outstanding 387500", output)
+        self.assertIn("cost per packet 3114", output)
+        self.assertIn("margin bp 3772", output)
+
+        # Assert ledger balances directly
+        flour = Item.objects.get(name="Flour")
+        oil = Item.objects.get(name="Cooking oil")
+        pouch = Item.objects.get(name="200 g pouch")
+        carton = Item.objects.get(name="Carton")
+        murukku = Item.objects.get(name="Murukku 200 g")
+
+        self.assertEqual(get_balance(flour), 120000)
+        self.assertEqual(get_balance(oil), 19500)
+        self.assertEqual(get_balance(pouch), 306)
+        self.assertEqual(get_balance(carton), 21)
+        self.assertEqual(get_balance(murukku), 88)
+
+        # Assert second call changes nothing and prints message
+        out2 = io.StringIO()
+        call_command("run_benchmark", stdout=out2)
+        output2 = out2.getvalue()
+        self.assertIn("Benchmark already run.", output2)
+
+        # Re-verify ledger unchanged
+        self.assertEqual(get_balance(flour), 120000)
+        self.assertEqual(get_balance(oil), 19500)
+        self.assertEqual(get_balance(pouch), 306)
+        self.assertEqual(get_balance(carton), 21)
+        self.assertEqual(get_balance(murukku), 88)
+        self.assertEqual(Purchase.objects.count(), 1)
+        self.assertEqual(ProductionRun.objects.count(), 1)
+        self.assertEqual(Invoice.objects.count(), 1)
+
 
 

@@ -652,6 +652,15 @@ def receivables_ageing(as_of=None) -> dict:
 # CSV export
 # ---------------------------------------------------------------------------
 
+def _display_unit(base_unit: str) -> str:
+    """Map internal base unit to display unit: g -> kg, ml -> L, pcs -> pcs."""
+    if base_unit == "g":
+        return "kg"
+    elif base_unit == "ml":
+        return "L"
+    return base_unit
+
+
 def _paise_to_csv(paise: int) -> str:
     """
     Convert integer paise to plain rupee string with 2 decimal places.
@@ -684,9 +693,8 @@ def to_csv(report: dict) -> str:
     """
     Convert a report dict to a CSV string.
     - money columns: plain rupee strings with 2 decimals, no commas (e.g. 7875.00)
-    - qty columns: g→kg (3 dp), ml→L (3 dp), pcs unchanged
-    - If a qty column has no uniform unit (stock_summary has mixed items),
-      values are written as-is (the "unit" column is already a separate text column).
+    - qty columns: converted to display units if Unit column exists, otherwise written as-is
+    - Unit column: shows DISPLAY unit ('kg', 'L', 'pcs') when quantities are converted
     - int and text columns: written as-is.
     """
     buf = io.StringIO()
@@ -697,20 +705,24 @@ def to_csv(report: dict) -> str:
 
     writer.writerow(columns)
 
+    has_unit_col = "Unit" in columns
+    unit_col_idx = columns.index("Unit") if has_unit_col else None
+
     def format_row(row):
+        base_unit = row[unit_col_idx] if (has_unit_col and unit_col_idx < len(row)) else None
         out = []
-        for val, ctype in zip(row, col_types):
-            if val is None:
+        for i, (val, ctype) in enumerate(zip(row, col_types)):
+            if i == unit_col_idx and isinstance(val, str):
+                out.append(_display_unit(val))
+            elif val is None:
                 out.append("")
             elif ctype == "money" and isinstance(val, int):
                 out.append(_paise_to_csv(val))
             elif ctype == "qty" and isinstance(val, int):
-                # We don't know unit per cell here (mixed), write raw int for stock summary
-                # For stock_ledger / production_report, unit is uniform per item context
-                # but since we can't know unit inside to_csv, write int as-is;
-                # callers that need display-unit CSV can call _qty_to_csv themselves.
-                # Exception: if val is a date or string, write as-is.
-                out.append(str(val))
+                if base_unit:
+                    out.append(_qty_to_csv(val, base_unit))
+                else:
+                    out.append(str(val))
             else:
                 out.append(str(val))
         return out
@@ -728,29 +740,6 @@ def to_csv_stock_summary(report: dict) -> str:
     """
     Specialized CSV for stock_summary: converts qty columns to display units per row,
     reading the 'Unit' column (index 2) to decide the conversion.
+    The Unit column shows the DISPLAY unit: 'kg', 'L', or 'pcs'.
     """
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(report["columns"])
-
-    col_types = report["column_types"]
-
-    for row in report["rows"]:
-        unit = row[2]  # the Unit column (g, ml, pcs)
-        out = []
-        for i, (val, ctype) in enumerate(zip(row, col_types)):
-            if val is None:
-                out.append("")
-            elif ctype == "money" and isinstance(val, int):
-                out.append(_paise_to_csv(val))
-            elif ctype == "qty" and isinstance(val, int):
-                out.append(_qty_to_csv(val, unit))
-            else:
-                out.append(str(val))
-        writer.writerow(out)
-
-    if report.get("totals") is not None:
-        totals = report["totals"]
-        writer.writerow([str(v) if v is not None else "" for v in totals])
-
-    return buf.getvalue()
+    return to_csv(report)
