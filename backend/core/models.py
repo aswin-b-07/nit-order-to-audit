@@ -71,3 +71,42 @@ class StockLedger(models.Model):
 
     def __str__(self):
         return f"{self.item.name} ({self.movement_type}: {self.quantity} {self.item.base_unit})"
+
+
+class Supplier(models.Model):
+    """A vendor or supplier providing raw materials or packaging."""
+
+    name = models.CharField(max_length=100, unique=True)
+    gstin = models.CharField(max_length=15, blank=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Purchase(models.Model):
+    """Purchase record for inward stock from a supplier."""
+
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name="purchases",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+        related_name="purchases",
+    )
+    quantity = models.IntegerField(help_text="In base units")
+    total_value_paise = models.IntegerField(help_text="Total value in paise")
+    invoice_no = models.CharField(max_length=50, blank=True)
+    purchase_date = models.DateField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Purchase {self.id} - {self.item.name} ({self.quantity})"
