@@ -54,6 +54,20 @@ from core.services import (
     record_expense,
     run_costing,
 )
+from core.reports import (
+    sales_register,
+    stock_summary,
+    stock_ledger,
+    customer_sales,
+    product_sales,
+    gst_summary,
+    purchase_register,
+    production_report,
+    payments_report,
+    receivables_ageing,
+    to_csv,
+    to_csv_stock_summary,
+)
 from core.pdf import (
     format_rupees,
     format_rate,
@@ -1162,5 +1176,528 @@ class ExpenseAndCostingTests(TestCase):
         self.assertIsNone(costing["cost_per_packet_paise"])
         self.assertIsNone(costing["margin_per_packet_paise"])
         self.assertIsNone(costing["margin_bp"])
+
+
+# ---------------------------------------------------------------------------
+# Shared helper used by multiple Phase 5b test classes
+# ---------------------------------------------------------------------------
+
+def _setup_benchmark_full(test_case):
+    """
+    Seed benchmark, buy 60 kg flour at Rs 45, run production (actual 188),
+    place + approve + create invoice for Retailer A (150 Murukku), dispatch,
+    pay Rs 4000 on invoice, add LABOUR 120000 and GAS_POWER 60000 expenses.
+    Returns (retailer_a, distributor_b, inv, run, admin1) on test_case.
+    """
+    tc = test_case
+    call_command("seed_benchmark")
+    tc.supplier = Supplier.objects.create(name="Test Supplier Phase5", gstin="33AACCBBDDEE1Z9")
+    tc.flour = Item.objects.get(name="Flour")
+    tc.oil = Item.objects.get(name="Cooking oil")
+    tc.spice = Item.objects.get(name="Salt and spice mix")
+    tc.pouch = Item.objects.get(name="200 g pouch")
+    tc.carton = Item.objects.get(name="Carton")
+    tc.murukku = Item.objects.get(name="Murukku 200 g")
+    tc.bom = BOM.objects.get(product=tc.murukku)
+
+    record_purchase(tc.flour, "60", "kg", "45", tc.supplier, date(2026, 11, 24), invoice_no="INV-P5")
+
+    User = get_user_model()
+    tc.admin1 = User.objects.create_user(username="admin1_p5", password="pw", is_staff=True)
+    tc.salesman_a = User.objects.create_user(username="salesman_a_p5", password="pw")
+    tc.salesman_b = User.objects.create_user(username="salesman_b_p5", password="pw")
+
+    tc.retailer_a = Customer.objects.get(name="Retailer A")
+    tc.distributor_b = Customer.objects.get(name="Distributor B")
+
+    tc.run = record_production_run(
+        tc.bom,
+        188,
+        {
+            tc.flour: {"qty": 40000},
+            tc.oil: {"qty": 10500},
+            tc.spice: {"qty": 1200},
+            tc.pouch: {"qty": 194, "wastage": 6},
+            tc.carton: {"qty": 9},
+        },
+        user=tc.admin1,
+    )
+
+    order = place_order(tc.retailer_a, tc.salesman_a, [(tc.murukku, 150)])
+    approve_order(order, tc.admin1)
+    tc.inv_a = create_invoice(order, tc.admin1, invoice_date=date(2026, 11, 24))
+    record_dispatch(tc.inv_a, tc.admin1)
+
+    record_payment(tc.inv_a, 400000, date(2026, 11, 25), Payment.Mode.UPI, user=tc.admin1)
+
+    record_expense(tc.run, "LABOUR", 120000, user=tc.admin1)
+    record_expense(tc.run, "GAS_POWER", 60000, user=tc.admin1)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b - Report tests (single-invoice benchmark scenario)
+# ---------------------------------------------------------------------------
+
+class ReportsBaseTest(TestCase):
+    """Tests for all reports using the standard benchmark state."""
+
+    def setUp(self):
+        _setup_benchmark_full(self)
+
+    # --- stock_summary ---
+
+    def test_stock_summary_values(self):
+        report = stock_summary()
+        self.assertEqual(report["title"], "Stock Summary")
+
+        # Build lookup: item name -> row
+        by_name = {r[0]: r for r in report["rows"]}
+
+        # Columns: name, kind, unit, opening, receipts, issues, adjustments, closing
+        # Flour: opening 100000, receipts 60000, issues 40000, closing 120000
+        flour = by_name["Flour"]
+        self.assertEqual(flour[3], 100000, "flour opening")
+        self.assertEqual(flour[4], 60000, "flour receipts")
+        self.assertEqual(flour[5], 40000, "flour issues")
+        self.assertEqual(flour[6], 0, "flour adjustments")
+        self.assertEqual(flour[7], 120000, "flour closing")
+
+        # Oil: opening 30000, receipts 0, issues 10500
+        oil = by_name["Cooking oil"]
+        self.assertEqual(oil[3], 30000)
+        self.assertEqual(oil[4], 0)
+        self.assertEqual(oil[5], 10500)
+        self.assertEqual(oil[7], 19500)
+
+        # Spice: opening 5000, issues 1200
+        spice = by_name["Salt and spice mix"]
+        self.assertEqual(spice[3], 5000)
+        self.assertEqual(spice[5], 1200)
+        self.assertEqual(spice[7], 3800)
+
+        # Pouches: opening 500, issues 194, closing 306
+        pouch = by_name["200 g pouch"]
+        self.assertEqual(pouch[3], 500)
+        self.assertEqual(pouch[5], 194)
+        self.assertEqual(pouch[7], 306)
+
+        # Cartons: opening 30, issues 9, closing 21
+        carton = by_name["Carton"]
+        self.assertEqual(carton[3], 30)
+        self.assertEqual(carton[5], 9)
+        self.assertEqual(carton[7], 21)
+
+        # Murukku: opening 50, receipts 188 (PROD_OUTPUT), issues 150 (DISPATCH)
+        murukku = by_name["Murukku 200 g"]
+        self.assertEqual(murukku[3], 50)
+        self.assertEqual(murukku[4], 188)
+        self.assertEqual(murukku[5], 150)
+        self.assertEqual(murukku[7], 88)
+
+    def test_stock_summary_identity(self):
+        report = stock_summary()
+        for row in report["rows"]:
+            name, kind, unit, opening, receipts, issues, adj, closing = row
+            self.assertEqual(
+                opening + receipts - issues + adj, closing,
+                f"Identity failed for {name}: {opening}+{receipts}-{issues}+{adj} != {closing}"
+            )
+
+    # --- stock_ledger ---
+
+    def test_stock_ledger_flour(self):
+        report = stock_ledger(self.flour)
+        # 3 rows: OPENING 100000, PURCHASE +60000, PROD_ISSUE -40000
+        self.assertEqual(len(report["rows"]), 3)
+        final_balance = report["rows"][-1][6]  # running balance of last row
+        self.assertEqual(final_balance, 120000)
+
+    def test_stock_ledger_murukku(self):
+        report = stock_ledger(self.murukku)
+        # OPENING 50, PROD_OUTPUT +188, DISPATCH -150
+        self.assertEqual(len(report["rows"]), 3)
+        self.assertEqual(report["rows"][-1][6], 88)
+
+    def test_stock_ledger_date_from_after_purchase(self):
+        # StockLedger.created_at uses auto_now_add, so all movements in a test run share
+        # today's date. We cannot separate events by day within one run.
+        # Test: date_from = tomorrow -> 0 rows in period (all events are "before" and go to opening)
+        from datetime import timedelta
+        tomorrow = date.today() + timedelta(days=1)
+        report = stock_ledger(self.flour, date_from=tomorrow)
+        self.assertEqual(len(report["rows"]), 0, "No rows in period when date_from is tomorrow")
+
+        # Test: date_from = today -> all 3 rows are in period (created_at date == today)
+        today = date.today()
+        report2 = stock_ledger(self.flour, date_from=today)
+        self.assertEqual(len(report2["rows"]), 3, "All 3 rows present when date_from is today")
+        self.assertEqual(report2["rows"][-1][6], 120000, "Final running balance")
+
+    # --- sales_register ---
+
+    def test_sales_register_one_invoice(self):
+        report = sales_register()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[0], "INV/2026-27/0001")
+        self.assertEqual(row[6], 750000)   # taxable
+        self.assertEqual(row[7], 18750)    # cgst
+        self.assertEqual(row[8], 18750)    # sgst
+        self.assertEqual(row[9], 0)        # igst
+        self.assertEqual(row[10], 787500)  # total
+
+        # Totals row
+        totals = report["totals"]
+        self.assertEqual(totals[6], 750000)
+        self.assertEqual(totals[10], 787500)
+
+    def test_sales_register_date_filter_excludes(self):
+        # Range that excludes 2026-11-24 → no rows, zero totals
+        report = sales_register(date_from=date(2026, 11, 25), date_to=date(2026, 11, 30))
+        self.assertEqual(len(report["rows"]), 0)
+        self.assertEqual(report["totals"][6], 0)
+        self.assertEqual(report["totals"][10], 0)
+
+    # --- customer_sales ---
+
+    def test_customer_sales(self):
+        report = customer_sales()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[0], "Retailer A")
+        self.assertEqual(row[2], 750000)   # taxable
+        self.assertEqual(row[4], 787500)   # total
+
+    # --- product_sales ---
+
+    def test_product_sales(self):
+        report = product_sales()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[1], 150)      # quantity
+        self.assertEqual(row[2], 750000)   # taxable
+
+    # --- gst_summary ---
+
+    def test_gst_summary_intra(self):
+        report = gst_summary()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[0], "Intra-state")
+        self.assertEqual(row[1], 500)       # gst_rate_bp
+        self.assertEqual(row[2], 750000)    # taxable
+        self.assertEqual(row[3], 18750)     # cgst
+        self.assertEqual(row[4], 18750)     # sgst
+        self.assertEqual(row[5], 0)         # igst
+
+        # GSTR-3B totals
+        g3b = report["gstr3b"]  # [taxable, igst, cgst, sgst]
+        self.assertEqual(g3b[0], 750000)
+        self.assertEqual(g3b[1], 0)
+        self.assertEqual(g3b[2], 18750)
+        self.assertEqual(g3b[3], 18750)
+
+    # --- purchase_register ---
+
+    def test_purchase_register(self):
+        report = purchase_register()
+        # Only actual purchases (not opening stock)
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[1], "Flour")     # item name
+        self.assertEqual(row[2], 60000)       # quantity base (g)
+        # Rate = 270000 paise total / 60 kg = 4500 paise/kg
+        self.assertEqual(row[4], 4500)        # rate paise/kg
+        self.assertEqual(row[5], 270000)      # total amount
+
+    # --- production_report ---
+
+    def test_production_report(self):
+        report = production_report()
+        # First row is the run summary row
+        rows = report["rows"]
+        run_row = rows[0]
+        self.assertTrue(run_row[0].startswith("RUN#"))
+        self.assertEqual(run_row[3], 200)   # expected_output
+        self.assertEqual(run_row[4], 188)   # actual_output
+        self.assertEqual(run_row[5], -600)  # yield_variance_bp
+        self.assertEqual(run_row[6], "Yes") # yield_flagged
+        self.assertEqual(run_row[8], 405500)  # material cost
+
+        # Find material lines
+        by_material = {r[2]: r for r in rows if r[2] != ""}
+        flour = by_material["Flour"]
+        self.assertEqual(flour[3], 40000)   # standard
+        self.assertEqual(flour[4], 40000)   # actual
+        self.assertEqual(flour[5], 0)       # variance_bp
+        self.assertEqual(flour[6], "No")    # flagged
+
+        oil = by_material["Cooking oil"]
+        self.assertEqual(oil[3], 10000)
+        self.assertEqual(oil[4], 10500)
+        self.assertEqual(oil[5], 500)
+        self.assertEqual(oil[6], "Yes")
+
+        spice = by_material["Salt and spice mix"]
+        self.assertEqual(spice[5], 0)
+        self.assertEqual(spice[6], "No")
+
+        pouch = by_material["200 g pouch"]
+        self.assertEqual(pouch[3], 200)
+        self.assertEqual(pouch[4], 194)
+        self.assertEqual(pouch[5], -300)
+        self.assertEqual(pouch[6], "No")  # -300 not flagged (not > 300)
+        self.assertEqual(pouch[7], 6)    # wastage
+
+        carton = by_material["Carton"]
+        self.assertEqual(carton[3], 10)
+        self.assertEqual(carton[4], 9)
+        self.assertEqual(carton[5], -1000)
+        self.assertEqual(carton[6], "Yes")
+
+    # --- payments_report ---
+
+    def test_payments_report(self):
+        report = payments_report()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[2], "INV/2026-27/0001")
+        self.assertEqual(row[3], 400000)
+        self.assertEqual(report["totals"][3], 400000)
+
+    # --- receivables_ageing ---
+
+    def test_receivables_ageing_same_day(self):
+        # as_of = invoice date: Retailer A outstanding 387500 in 0-30 bucket
+        report = receivables_ageing(as_of=date(2026, 11, 24))
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[0], "Retailer A")
+        self.assertEqual(row[1], 387500)  # 0-30
+        self.assertEqual(row[2], 0)       # 31-60
+        self.assertEqual(row[3], 0)       # 61-90
+        self.assertEqual(row[4], 0)       # 90+
+
+    def test_receivables_ageing_45_days_later(self):
+        # as_of = invoice_date + 45 → 31-60 bucket
+        from datetime import timedelta
+        report = receivables_ageing(as_of=date(2026, 11, 24) + __import__("datetime").timedelta(days=45))
+        row = report["rows"][0]
+        self.assertEqual(row[1], 0)       # 0-30 empty
+        self.assertEqual(row[2], 387500)  # 31-60
+
+    # --- no floats ---
+
+    def test_no_floats_in_report_rows(self):
+        reports = [
+            sales_register(),
+            stock_summary(),
+            stock_ledger(self.flour),
+            customer_sales(),
+            product_sales(),
+            gst_summary(),
+            purchase_register(),
+            production_report(),
+            payments_report(),
+            receivables_ageing(as_of=date(2026, 11, 24)),
+        ]
+        for report in reports:
+            for row in report["rows"]:
+                for val in row:
+                    self.assertNotIsInstance(
+                        val, float,
+                        f"Float found in report '{report['title']}': {val}"
+                    )
+
+    # --- read-only: table counts unchanged ---
+
+    def test_reports_are_read_only(self):
+        from core.models import (
+            StockLedger, Purchase, Invoice, Payment, AuditLog, Expense,
+            ProductionRun, CreditNote,
+        )
+        counts_before = {
+            "StockLedger": StockLedger.objects.count(),
+            "Purchase": Purchase.objects.count(),
+            "Invoice": Invoice.objects.count(),
+            "Payment": Payment.objects.count(),
+            "AuditLog": AuditLog.objects.count(),
+            "Expense": Expense.objects.count(),
+            "ProductionRun": ProductionRun.objects.count(),
+            "CreditNote": CreditNote.objects.count(),
+        }
+        # Call all reports
+        sales_register()
+        stock_summary()
+        stock_ledger(self.flour)
+        customer_sales()
+        product_sales()
+        gst_summary()
+        purchase_register()
+        production_report()
+        payments_report()
+        receivables_ageing()
+
+        for model_name, count in counts_before.items():
+            current = eval(f"{model_name}.objects.count()")
+            self.assertEqual(current, count, f"{model_name} count changed after reports!")
+
+    # --- CSV tests ---
+
+    def test_csv_sales_register_money_format(self):
+        report = sales_register()
+        csv_text = to_csv(report)
+        # 787500 paise = 7875.00 rupees (no commas)
+        self.assertIn("7875.00", csv_text)
+        # 18750 paise = 187.50
+        self.assertIn("187.50", csv_text)
+        # 750000 paise = 7500.00
+        self.assertIn("7500.00", csv_text)
+        # Must NOT have commas inside money values
+        import re
+        for line in csv_text.splitlines()[1:]:  # skip header
+            for field in line.split(","):
+                # A money value shouldn't be like "7,875.00" – but CSV commas are field seps
+                # We check no comma appears inside a numeric value that looks like money
+                # By checking the field itself (after CSV split) has no comma:
+                stripped = field.strip('"')
+                if stripped and stripped[0].isdigit():
+                    self.assertNotIn(",", stripped,
+                                     f"Comma inside money value in CSV: {stripped!r}")
+
+    def test_csv_sales_register_row_count(self):
+        import csv as csv_mod
+        report = sales_register()
+        csv_text = to_csv(report)
+        reader = list(csv_mod.reader(csv_text.splitlines()))
+        # header + 1 data row + 1 totals row = 3
+        self.assertEqual(len(reader), 3)
+
+    def test_csv_stock_summary_display_units(self):
+        report = stock_summary()
+        csv_text = to_csv_stock_summary(report)
+        # Flour closing: 120000 g → 120.000 kg
+        self.assertIn("120.000", csv_text)
+        # Oil closing: 19500 ml → 19.500 L
+        self.assertIn("19.500", csv_text)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b Scenario 2: Two invoices (Retailer A + Distributor B)
+# ---------------------------------------------------------------------------
+
+class ReportsTwoInvoicesTest(TestCase):
+    """Scenario 2: add Distributor B invoice for 88 Murukku (inter-state)."""
+
+    def setUp(self):
+        _setup_benchmark_full(self)
+        # Retailer A already invoiced in _setup_benchmark_full.
+        # Now add Distributor B for 88 packets.
+        order_b = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 88)])
+        approve_order(order_b, self.admin1)
+        self.inv_b = create_invoice(order_b, self.admin1, invoice_date=date(2026, 11, 24))
+
+    def test_sales_register_two_invoices(self):
+        report = sales_register()
+        self.assertEqual(len(report["rows"]), 2)
+
+        inv_b_row = next(r for r in report["rows"] if r[0] == "INV/2026-27/0002")
+        self.assertEqual(inv_b_row[6], 440000)   # taxable
+        self.assertEqual(inv_b_row[7], 0)         # cgst
+        self.assertEqual(inv_b_row[8], 0)         # sgst
+        self.assertEqual(inv_b_row[9], 22000)     # igst
+        self.assertEqual(inv_b_row[10], 462000)   # total
+
+        # Totals: both ISSUED
+        totals = report["totals"]
+        self.assertEqual(totals[6], 1190000)   # 750000 + 440000
+        self.assertEqual(totals[10], 1249500)  # 787500 + 462000
+
+    def test_gst_summary_two_groups(self):
+        report = gst_summary()
+        self.assertEqual(len(report["rows"]), 2)
+
+        by_type = {r[0]: r for r in report["rows"]}
+        intra = by_type["Intra-state"]
+        self.assertEqual(intra[2], 750000)
+        self.assertEqual(intra[3], 18750)  # cgst
+        self.assertEqual(intra[4], 18750)  # sgst
+
+        inter = by_type["Inter-state"]
+        self.assertEqual(inter[2], 440000)
+        self.assertEqual(inter[5], 22000)  # igst
+
+
+# ---------------------------------------------------------------------------
+# Phase 5b Scenario 3: Cancelled invoice
+# ---------------------------------------------------------------------------
+
+class ReportsCancelledInvoiceTest(TestCase):
+    """Scenario 3: cancel Retailer A invoice (fresh setup, no payment)."""
+
+    def setUp(self):
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Supplier C3", gstin="33CCDDEE1234F1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        record_purchase(self.flour, "60", "kg", "45", self.supplier, date(2026, 11, 24))
+
+        User = get_user_model()
+        self.admin1 = User.objects.create_user(username="admin1_c3", password="pw", is_staff=True)
+        self.salesman_a = User.objects.create_user(username="salesman_a_c3", password="pw")
+        self.retailer_a = Customer.objects.get(name="Retailer A")
+
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+            user=self.admin1,
+        )
+
+        order = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, self.admin1)
+        self.inv = create_invoice(order, self.admin1, invoice_date=date(2026, 11, 24))
+        # No payment - so we can cancel
+        self.cn = cancel_invoice(self.inv, self.admin1, "Test cancellation",
+                                 note_date=date(2026, 11, 24))
+
+    def test_sales_register_shows_cancelled(self):
+        report = sales_register()
+        self.assertEqual(len(report["rows"]), 1)
+        row = report["rows"][0]
+        self.assertEqual(row[5], "CANCELLED")  # status column
+
+    def test_sales_register_totals_exclude_cancelled(self):
+        report = sales_register()
+        # Totals must be zero since the only invoice is cancelled
+        self.assertEqual(report["totals"][6], 0)   # taxable
+        self.assertEqual(report["totals"][10], 0)  # total
+
+    def test_gst_summary_zero_for_cancelled(self):
+        report = gst_summary()
+        # No ISSUED invoices → no rows
+        self.assertEqual(len(report["rows"]), 0)
+        # Grand total zero
+        g3b = report["gstr3b"]
+        self.assertEqual(g3b[0], 0)
+        self.assertEqual(g3b[1], 0)
+
+    def test_gst_summary_credit_note_section(self):
+        report = gst_summary()
+        cn = report["credit_notes"]
+        self.assertEqual(cn["count"], 1)
+        self.assertEqual(cn["total_paise"], 787500)
 
 

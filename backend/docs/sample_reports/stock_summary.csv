@@ -1,0 +1,7 @@
+﻿Item,Kind,Unit,Opening,Receipts,Issues,Adjustments,Closing
+Murukku 200 g,FINISHED,pcs,50,0,0,0,50
+200 g pouch,PACKAGING,pcs,500,0,0,0,500
+Carton,PACKAGING,pcs,30,0,0,0,30
+Cooking oil,RAW,ml,30.000,0.000,0.000,0.000,30.000
+Flour,RAW,g,100.000,0.000,0.000,0.000,100.000
+Salt and spice mix,RAW,g,5.000,0.000,0.000,0.000,5.000
