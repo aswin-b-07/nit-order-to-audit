@@ -198,3 +198,102 @@ class ProductionRunLine(models.Model):
     def __str__(self):
         return f"{self.run} - {self.item.name}"
 
+
+class Customer(models.Model):
+    """Customer profile for retailers or distributors."""
+
+    class Kind(models.TextChoices):
+        RETAILER = "RETAILER", "Retailer"
+        DISTRIBUTOR = "DISTRIBUTOR", "Distributor"
+
+    name = models.CharField(max_length=100, unique=True)
+    kind = models.CharField(max_length=15, choices=Kind.choices)
+    gstin = models.CharField(max_length=15, blank=True)
+    state = models.CharField(max_length=40)
+    state_code = models.CharField(max_length=2)
+    phone = models.CharField(max_length=15, blank=True)
+
+    def __str__(self):
+        return self.name
+
+
+class ProductPrice(models.Model):
+    """Catalog selling price and GST details for finished products."""
+
+    product = models.OneToOneField(
+        Item,
+        on_delete=models.PROTECT,
+    )
+    price_paise = models.PositiveIntegerField(help_text="Price per piece before tax")
+    gst_rate_bp = models.PositiveIntegerField(
+        default=500,
+        help_text="GST rate in basis points (500 = 5%)",
+    )
+    hsn_code = models.CharField(max_length=8)
+
+    def __str__(self):
+        return f"{self.product.name} ({self.price_paise} paise)"
+
+
+class Order(models.Model):
+    """Sales order placed by a customer through a salesman."""
+
+    class Status(models.TextChoices):
+        SUBMITTED = "SUBMITTED", "Submitted"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        INVOICED = "INVOICED", "Invoiced"
+        DISPATCHED = "DISPATCHED", "Dispatched"
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.PROTECT,
+        related_name="orders",
+    )
+    salesman = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="orders",
+    )
+    status = models.CharField(
+        max_length=12,
+        choices=Status.choices,
+        default=Status.SUBMITTED,
+    )
+    reject_reason = models.CharField(max_length=200, blank=True)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Order #{self.id} - {self.customer.name} ({self.status})"
+
+
+class OrderLine(models.Model):
+    """Line item on a sales order specifying ordered product and quantity."""
+
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="lines",
+    )
+    product = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+    )
+    quantity = models.PositiveIntegerField(help_text="Quantity in pieces")
+    unit_price_paise = models.PositiveIntegerField(help_text="Unit price in paise")
+
+    class Meta:
+        unique_together = ("order", "product")
+
+    def __str__(self):
+        return f"{self.order} - {self.product.name} x {self.quantity}"
+
+

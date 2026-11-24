@@ -8,6 +8,10 @@ from core.models import (
     BOMLine,
     ProductionRun,
     ProductionRunLine,
+    Customer,
+    ProductPrice,
+    Order,
+    OrderLine,
 )
 
 
@@ -126,6 +130,64 @@ class ProductionRunAdmin(admin.ModelAdmin):
     )
     list_filter = ("yield_flagged", "bom")
     inlines = [ProductionRunLineInline]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Customer)
+class CustomerAdmin(admin.ModelAdmin):
+    """Admin configuration for Customer (editable)."""
+
+    list_display = ("name", "kind", "gstin", "state", "phone")
+    list_filter = ("kind", "state")
+    search_fields = ("name", "gstin", "phone")
+
+
+@admin.register(ProductPrice)
+class ProductPriceAdmin(admin.ModelAdmin):
+    """Admin configuration for ProductPrice (editable)."""
+
+    list_display = ("product", "price_paise", "gst_rate_bp", "hsn_code")
+    search_fields = ("product__name", "hsn_code")
+
+
+class OrderLineInline(admin.TabularInline):
+    model = OrderLine
+    extra = 0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    """Admin configuration for Order (read-only with read-only lines)."""
+
+    list_display = (
+        "id",
+        "customer",
+        "salesman",
+        "status",
+        "created_at",
+        "decided_by",
+        "decided_at",
+    )
+    list_filter = ("status",)
+    search_fields = ("customer__name", "salesman__username")
+    inlines = [OrderLineInline]
 
     def has_add_permission(self, request):
         return False

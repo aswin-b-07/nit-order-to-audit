@@ -1,8 +1,9 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Union
+from typing import Union, List, Tuple
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 from core.models import (
     StockLedger,
     Item,
@@ -12,6 +13,10 @@ from core.models import (
     BOMLine,
     ProductionRun,
     ProductionRunLine,
+    Customer,
+    ProductPrice,
+    Order,
+    OrderLine,
 )
 
 UNIT_CONVERSIONS = {
@@ -314,3 +319,159 @@ def record_production_run(
         run.save()
 
         return run
+
+
+def order_total_paise(order: Order) -> int:
+    """Return total order value in paise: sum of (quantity * unit_price_paise) over lines."""
+    return sum(line.quantity * line.unit_price_paise for line in order.lines.all())
+
+
+def place_order(
+    customer: Customer,
+    salesman,
+    lines: List[Tuple[Item, int]],
+) -> Order:
+    """
+    Place a sales order.
+    lines is a list of (product_item, quantity).
+    Validates at least one line, each quantity >= 1, each product is FINISHED
+    and has a ProductPrice, and no product appears twice.
+    Creates Order and OrderLine instances within a single atomic transaction.
+    """
+    if not lines:
+        raise ValueError("Order must have at least one line.")
+
+    seen_products = set()
+    validated_lines = []
+
+    for product_item, quantity in lines:
+        if quantity < 1:
+            raise ValueError(f"Quantity must be at least 1, got {quantity} for '{product_item.name}'.")
+
+        if product_item.kind != Item.Kind.FINISHED:
+            raise ValueError(f"Product '{product_item.name}' is not a finished good.")
+
+        try:
+            price_obj = ProductPrice.objects.get(product=product_item)
+        except ProductPrice.DoesNotExist:
+            raise ValueError(f"Product '{product_item.name}' does not have a configured price.")
+
+        if product_item.pk in seen_products:
+            raise ValueError(f"Duplicate product '{product_item.name}' in order lines.")
+        seen_products.add(product_item.pk)
+
+        validated_lines.append((product_item, quantity, price_obj.price_paise))
+
+    with transaction.atomic():
+        order = Order.objects.create(
+            customer=customer,
+            salesman=salesman,
+            status=Order.Status.SUBMITTED,
+        )
+        for prod, qty, unit_price in validated_lines:
+            OrderLine.objects.create(
+                order=order,
+                product=prod,
+                quantity=qty,
+                unit_price_paise=unit_price,
+            )
+        return order
+
+
+def stock_report(order: Order) -> list:
+    """
+    Generate stock availability report for lines in an order.
+    Returns list of dicts: {"product", "ordered", "available", "shortage"}.
+    """
+    report = []
+    for line in order.lines.select_related("product").all():
+        available = get_balance(line.product)
+        shortage = max(line.quantity - available, 0)
+        report.append({
+            "product": line.product,
+            "ordered": line.quantity,
+            "available": available,
+            "shortage": shortage,
+        })
+    return report
+
+
+def update_order_line(
+    order: Order,
+    product: Item,
+    quantity: int,
+    unit_price_paise: int = None,
+    user=None,
+) -> OrderLine:
+    """
+    Update quantity and optionally unit price on an order line.
+    Only permitted when order status is SUBMITTED.
+    """
+    if order.status != Order.Status.SUBMITTED:
+        raise ValueError(
+            f"Cannot update line for order #{order.id} with status '{order.status}'. "
+            "Only SUBMITTED orders can be modified."
+        )
+
+    if quantity < 1:
+        raise ValueError(f"Quantity must be at least 1, got {quantity}.")
+
+    try:
+        line = order.lines.get(product=product)
+    except OrderLine.DoesNotExist:
+        raise ValueError(f"Product '{product.name}' is not in order #{order.id}.")
+
+    line.quantity = quantity
+    if unit_price_paise is not None:
+        if unit_price_paise < 0:
+            raise ValueError("unit_price_paise cannot be negative.")
+        line.unit_price_paise = unit_price_paise
+    line.save()
+    return line
+
+
+def approve_order(order: Order, user=None) -> Order:
+    """
+    Approve an order if stock is sufficient.
+    Only allowed from SUBMITTED status.
+    Raises ValueError detailing shortage if any product is insufficient.
+    """
+    if order.status != Order.Status.SUBMITTED:
+        raise ValueError(
+            f"Cannot approve order #{order.id} with status '{order.status}'. "
+            "Only SUBMITTED orders can be approved."
+        )
+
+    report = stock_report(order)
+    shortages = [r for r in report if r["shortage"] > 0]
+    if shortages:
+        shortage_msgs = [f"{r['product'].name} short by {r['shortage']}" for r in shortages]
+        raise ValueError(f"Insufficient stock: {', '.join(shortage_msgs)}")
+
+    order.status = Order.Status.APPROVED
+    order.decided_by = user
+    order.decided_at = timezone.now()
+    order.save()
+    return order
+
+
+def reject_order(order: Order, user=None, reason: str = "") -> Order:
+    """
+    Reject an order with a reason.
+    Only allowed from SUBMITTED status.
+    """
+    if order.status != Order.Status.SUBMITTED:
+        raise ValueError(
+            f"Cannot reject order #{order.id} with status '{order.status}'. "
+            "Only SUBMITTED orders can be rejected."
+        )
+
+    if not reason or not reason.strip():
+        raise ValueError("Reject reason must not be empty.")
+
+    order.status = Order.Status.REJECTED
+    order.reject_reason = reason.strip()
+    order.decided_by = user
+    order.decided_at = timezone.now()
+    order.save()
+    return order

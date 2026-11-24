@@ -1,10 +1,17 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from core.models import Item, StockLedger, BOM, BOMLine
+from core.models import (
+    Item,
+    StockLedger,
+    BOM,
+    BOMLine,
+    Customer,
+    ProductPrice,
+)
 
 
 class Command(BaseCommand):
-    help = "Seed initial benchmark items, opening stock ledger entries, and benchmark BOM."
+    help = "Seed initial benchmark items, opening stock, BOM, customers, and price list."
 
     def handle(self, *args, **options):
         items_data = [
@@ -125,3 +132,36 @@ class Command(BaseCommand):
                     self.stdout.write(
                         f"BOMLine for '{line_item_name}' already exists. Skipping."
                     )
+
+            # Seed Customers
+            # Note: the GSTINs are dummy test values
+            Customer.objects.get_or_create(
+                name="Retailer A",
+                defaults={
+                    "kind": Customer.Kind.RETAILER,
+                    "state": "Tamil Nadu",
+                    "state_code": "33",
+                    "gstin": "33AAAAA0000A1Z5",  # dummy test GSTIN value
+                },
+            )
+            Customer.objects.get_or_create(
+                name="Distributor B",
+                defaults={
+                    "kind": Customer.Kind.DISTRIBUTOR,
+                    "state": "Karnataka",
+                    "state_code": "29",
+                    "gstin": "29BBBBB0000B1Z5",  # dummy test GSTIN value
+                },
+            )
+
+            # Seed ProductPrice for Murukku 200 g
+            # Note: HSN code is an assumption, documented in README
+            ProductPrice.objects.get_or_create(
+                product=murukku,
+                defaults={
+                    "price_paise": 5000,
+                    "gst_rate_bp": 500,
+                    "hsn_code": "2106",  # HSN code is an assumption, documented in README
+                },
+            )
+            self.stdout.write(self.style.SUCCESS("Seeded customers and product price list."))

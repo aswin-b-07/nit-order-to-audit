@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
@@ -11,6 +12,10 @@ from core.models import (
     BOM,
     BOMLine,
     ProductionRun,
+    Customer,
+    ProductPrice,
+    Order,
+    OrderLine,
 )
 from core.services import (
     get_balance,
@@ -21,6 +26,12 @@ from core.services import (
     variance_bp,
     is_flagged,
     record_production_run,
+    order_total_paise,
+    place_order,
+    stock_report,
+    update_order_line,
+    approve_order,
+    reject_order,
 )
 
 
@@ -67,6 +78,10 @@ class StockFoundationTests(TestCase):
         # Verify BOM and lines are not duplicated
         self.assertEqual(BOM.objects.count(), 1)
         self.assertEqual(BOMLine.objects.count(), 5)
+
+        # Verify Customers and ProductPrices are not duplicated
+        self.assertEqual(Customer.objects.count(), 2)
+        self.assertEqual(ProductPrice.objects.count(), 1)
 
     def test_to_base_valid(self):
         self.assertEqual(to_base("40", "kg"), 40000)
@@ -316,3 +331,143 @@ class ProductionRunTests(TestCase):
         }
         with self.assertRaises(ValueError):
             record_production_run(self.bom, 188, lines_missing)
+
+
+class OrderApprovalTests(TestCase):
+    def setUp(self):
+        # Helper: runs seed, buys 60 kg flour at Rs 45, and runs benchmark production run
+        call_command("seed_benchmark")
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+        )
+
+        # Run benchmark production run (actual_output 188)
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+        )
+        # Finished stock of Murukku is now 50 + 188 = 238
+        self.assertEqual(get_balance(self.murukku), 238)
+
+        # Users
+        User = get_user_model()
+        self.salesman_a = User.objects.create_user(username="salesman_a", password="password")
+        self.salesman_b = User.objects.create_user(username="salesman_b", password="password")
+        self.admin1 = User.objects.create_user(username="admin1", password="password", is_staff=True)
+
+        self.retailer_a = Customer.objects.get(name="Retailer A")
+        self.distributor_b = Customer.objects.get(name="Distributor B")
+
+    def test_order_placement_approval_dispatch_and_rejection_flow(self):
+        # 1. place_order(Retailer A, salesman_a, [(murukku, 150)]):
+        #    status SUBMITTED, line unit_price_paise 5000, order_total_paise 750000
+        order1 = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 150)])
+        self.assertEqual(order1.status, Order.Status.SUBMITTED)
+        line1 = order1.lines.get(product=self.murukku)
+        self.assertEqual(line1.unit_price_paise, 5000)
+        self.assertEqual(order_total_paise(order1), 750000)
+
+        # 2. stock_report shows available 238, shortage 0
+        rep1 = stock_report(order1)
+        self.assertEqual(len(rep1), 1)
+        self.assertEqual(rep1[0]["product"], self.murukku)
+        self.assertEqual(rep1[0]["ordered"], 150)
+        self.assertEqual(rep1[0]["available"], 238)
+        self.assertEqual(rep1[0]["shortage"], 0)
+
+        # 3. approve_order works: status APPROVED, decided_by is admin1, decided_at is set
+        approve_order(order1, user=self.admin1)
+        self.assertEqual(order1.status, Order.Status.APPROVED)
+        self.assertEqual(order1.decided_by, self.admin1)
+        self.assertIsNotNone(order1.decided_at)
+
+        # 4. simulate dispatch:
+        #    StockLedger: item Murukku 200 g, movement_type DISPATCH, quantity -150,
+        #    value_paise -value_for_issue(murukku, 150), source_type "Order"
+        #    finished stock is now 88
+        issue_cost = value_for_issue(self.murukku, 150)
+        StockLedger.objects.create(
+            item=self.murukku,
+            movement_type=StockLedger.MovementType.DISPATCH,
+            quantity=-150,
+            value_paise=-issue_cost,
+            source_type="Order",
+            source_id=order1.id,
+            note=f"Dispatch for Order #{order1.id}",
+        )
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # 5. place_order(Distributor B, salesman_b, [(murukku, 120)]):
+        #    stock_report shows available 88, shortage 32
+        order2 = place_order(self.distributor_b, self.salesman_b, [(self.murukku, 120)])
+        rep2 = stock_report(order2)
+        self.assertEqual(len(rep2), 1)
+        self.assertEqual(rep2[0]["available"], 88)
+        self.assertEqual(rep2[0]["shortage"], 32)
+
+        # 6. approve_order on that order raises ValueError with "32" in message, still SUBMITTED
+        with self.assertRaises(ValueError) as ctx:
+            approve_order(order2, user=self.admin1)
+        self.assertIn("32", str(ctx.exception))
+        order2.refresh_from_db()
+        self.assertEqual(order2.status, Order.Status.SUBMITTED)
+
+        # 7. update_order_line to quantity 88, then approve_order succeeds
+        update_order_line(order2, self.murukku, 88)
+        line2 = order2.lines.get(product=self.murukku)
+        self.assertEqual(line2.quantity, 88)
+        approve_order(order2, user=self.admin1)
+        self.assertEqual(order2.status, Order.Status.APPROVED)
+
+        # 8. reject_order sets REJECTED and stores reason; rejecting with empty reason raises ValueError
+        order3 = place_order(self.retailer_a, self.salesman_a, [(self.murukku, 10)])
+        with self.assertRaises(ValueError):
+            reject_order(order3, user=self.admin1, reason="")
+        with self.assertRaises(ValueError):
+            reject_order(order3, user=self.admin1, reason="   ")
+
+        reject_order(order3, user=self.admin1, reason="Credit limit exceeded")
+        self.assertEqual(order3.status, Order.Status.REJECTED)
+        self.assertEqual(order3.reject_reason, "Credit limit exceeded")
+        self.assertEqual(order3.decided_by, self.admin1)
+        self.assertIsNotNone(order3.decided_at)
+
+        # 9. update_order_line on an APPROVED order raises ValueError
+        with self.assertRaises(ValueError):
+            update_order_line(order1, self.murukku, 100)
+
+    def test_order_placement_validation_errors(self):
+        # place_order with quantity 0 raises ValueError
+        with self.assertRaises(ValueError):
+            place_order(self.retailer_a, self.salesman_a, [(self.murukku, 0)])
+
+        # place_order with a RAW item raises ValueError
+        with self.assertRaises(ValueError):
+            place_order(self.retailer_a, self.salesman_a, [(self.flour, 10)])
+
+        # an empty lines list raises ValueError
+        with self.assertRaises(ValueError):
+            place_order(self.retailer_a, self.salesman_a, [])
