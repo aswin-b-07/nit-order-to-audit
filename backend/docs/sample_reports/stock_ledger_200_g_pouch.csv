@@ -1,2 +1,3 @@
 ﻿Date,Movement Type,Source Type,Source ID,Qty In,Qty Out,Running Balance
 2026-11-24,OPENING,Opening,,500,0,500
+2026-11-24,PROD_ISSUE,ProductionRun,1,0,194,306

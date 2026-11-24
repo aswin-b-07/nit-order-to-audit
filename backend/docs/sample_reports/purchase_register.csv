@@ -1,2 +1,3 @@
 ﻿Supplier,Item,Quantity (base),Display Unit,Rate (Rs/display unit),Amount (Rs),Date
-,,,,,0.00,
+Benchmark Supplier,Flour,60000,kg,45.00,2700.00,2026-11-24
+,,,,,2700.00,

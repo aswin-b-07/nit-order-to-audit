@@ -1,1 +1,7 @@
 ﻿Run,Product,Material,Standard Qty,Actual Qty,Variance (bp),Flagged,Wastage,Cost (Rs)
+RUN#1,Murukku 200 g,,200,188,-600,Yes,6,4055.00
+RUN#1,,Flour,40000,40000,0,No,0,1725.00
+RUN#1,,Cooking oil,10000,10500,500,Yes,0,1470.00
+RUN#1,,Salt and spice mix,1200,1200,0,No,0,240.00
+RUN#1,,200 g pouch,200,194,-300,No,6,485.00
+RUN#1,,Carton,10,9,-1000,Yes,0,135.00

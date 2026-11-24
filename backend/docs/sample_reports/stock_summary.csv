@@ -1,7 +1,7 @@
 ﻿Item,Kind,Unit,Opening,Receipts,Issues,Adjustments,Closing
-Murukku 200 g,FINISHED,pcs,50,0,0,0,50
-200 g pouch,PACKAGING,pcs,500,0,0,0,500
-Carton,PACKAGING,pcs,30,0,0,0,30
-Cooking oil,RAW,ml,30.000,0.000,0.000,0.000,30.000
-Flour,RAW,g,100.000,0.000,0.000,0.000,100.000
-Salt and spice mix,RAW,g,5.000,0.000,0.000,0.000,5.000
+Murukku 200 g,FINISHED,pcs,50,188,150,0,88
+200 g pouch,PACKAGING,pcs,500,0,194,0,306
+Carton,PACKAGING,pcs,30,0,9,0,21
+Cooking oil,RAW,L,30.000,0.000,10.500,0.000,19.500
+Flour,RAW,kg,100.000,60.000,40.000,0.000,120.000
+Salt and spice mix,RAW,kg,5.000,0.000,1.200,0.000,3.800
