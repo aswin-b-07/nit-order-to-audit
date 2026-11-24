@@ -127,3 +127,7 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# variance flag tolerance, in percent
+VARIANCE_TOLERANCE_PERCENT = 3
+

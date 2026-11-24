@@ -1,10 +1,10 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from core.models import Item, StockLedger
+from core.models import Item, StockLedger, BOM, BOMLine
 
 
 class Command(BaseCommand):
-    help = "Seed initial benchmark items and opening stock ledger entries."
+    help = "Seed initial benchmark items, opening stock ledger entries, and benchmark BOM."
 
     def handle(self, *args, **options):
         items_data = [
@@ -87,4 +87,41 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write(
                         f"Opening stock for '{item.name}' already exists. Skipping."
+                    )
+
+            # Seed benchmark BOM for Murukku 200 g
+            murukku = Item.objects.get(name="Murukku 200 g")
+            bom, bom_created = BOM.objects.get_or_create(
+                product=murukku,
+                defaults={"expected_yield": 200},
+            )
+            if bom_created:
+                self.stdout.write(self.style.SUCCESS("Created BOM for Murukku 200 g."))
+            else:
+                self.stdout.write("BOM for Murukku 200 g already exists. Skipping.")
+
+            bom_lines = [
+                ("Flour", 40000),
+                ("Cooking oil", 10000),
+                ("Salt and spice mix", 1200),
+                ("200 g pouch", 200),
+                ("Carton", 10),
+            ]
+
+            for line_item_name, qty in bom_lines:
+                line_item = Item.objects.get(name=line_item_name)
+                line, line_created = BOMLine.objects.get_or_create(
+                    bom=bom,
+                    item=line_item,
+                    defaults={"quantity": qty},
+                )
+                if line_created:
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f"Created BOMLine for '{line_item_name}': {qty} {line_item.base_unit}"
+                        )
+                    )
+                else:
+                    self.stdout.write(
+                        f"BOMLine for '{line_item_name}' already exists. Skipping."
                     )

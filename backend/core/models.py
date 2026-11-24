@@ -110,3 +110,91 @@ class Purchase(models.Model):
 
     def __str__(self):
         return f"Purchase {self.id} - {self.item.name} ({self.quantity})"
+
+
+class BOM(models.Model):
+    """Bill of Materials specifying recipe components for a finished product."""
+
+    product = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+        unique=True,
+    )
+    expected_yield = models.PositiveIntegerField(help_text="Packets per batch")
+
+    def __str__(self):
+        return f"BOM: {self.product.name}"
+
+
+class BOMLine(models.Model):
+    """Component quantity required per batch for a BOM."""
+
+    bom = models.ForeignKey(
+        BOM,
+        on_delete=models.CASCADE,
+        related_name="lines",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+    )
+    quantity = models.IntegerField(help_text="Base units per batch, must be > 0")
+
+    class Meta:
+        unique_together = ("bom", "item")
+
+    def __str__(self):
+        return f"{self.bom} - {self.item.name} ({self.quantity})"
+
+
+class ProductionRun(models.Model):
+    """Execution of a production batch against a BOM."""
+
+    bom = models.ForeignKey(
+        BOM,
+        on_delete=models.PROTECT,
+    )
+    batches = models.PositiveIntegerField(default=1)
+    expected_output = models.IntegerField()
+    actual_output = models.IntegerField()
+    tolerance_bp = models.IntegerField()
+    yield_variance_bp = models.IntegerField()
+    yield_flagged = models.BooleanField()
+    material_cost_paise = models.IntegerField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ProductionRun #{self.id} for {self.bom.product.name}"
+
+
+class ProductionRunLine(models.Model):
+    """Materials issued and tracked during a production run."""
+
+    run = models.ForeignKey(
+        ProductionRun,
+        on_delete=models.CASCADE,
+        related_name="lines",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.PROTECT,
+    )
+    standard_qty = models.IntegerField()
+    actual_qty = models.IntegerField()
+    wastage_qty = models.IntegerField(
+        default=0,
+        help_text="The damaged/scrap part of actual_qty",
+    )
+    variance_bp = models.IntegerField()
+    flagged = models.BooleanField()
+    cost_paise = models.IntegerField()
+
+    def __str__(self):
+        return f"{self.run} - {self.item.name}"
+
