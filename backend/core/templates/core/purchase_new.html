@@ -1,0 +1,87 @@
+{% extends "core/base.html" %}
+
+{% block title %}Record Purchase - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 600px; margin: 0 auto;">
+    <h2>Record Purchase</h2>
+
+    {% if form_errors %}
+        <div class="alert alert-error">
+            <ul style="margin: 0; padding-left: 1.25rem;">
+                {% for err in form_errors %}
+                    <li>{{ err }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'purchase_create' %}">
+        {% csrf_token %}
+
+        <div class="form-group">
+            <label for="supplier">Supplier *</label>
+            <select name="supplier" id="supplier" class="form-control" style="max-width: 100%; min-height: 48px; font-size: 1rem;" required>
+                <option value="">-- Select Supplier --</option>
+                {% for s in suppliers %}
+                    <option value="{{ s.id }}" {% if selected_supplier_id == s.id|stringformat:"s" %}selected{% endif %}>
+                        {{ s.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="item">Item (Raw material or packaging) *</label>
+            <select name="item" id="item" class="form-control" style="max-width: 100%; min-height: 48px; font-size: 1rem;" required>
+                <option value="">-- Select Item --</option>
+                {% for it in items %}
+                    <option value="{{ it.id }}" {% if selected_item_id == it.id|stringformat:"s" %}selected{% endif %}>
+                        {{ it.name }} ({% if it.base_unit == 'g' %}kg{% elif it.base_unit == 'ml' %}litre{% else %}piece{% endif %})
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="quantity">Quantity (in item's display unit: kg, litre, piece) *</label>
+            <input type="text"
+                   name="quantity"
+                   id="quantity"
+                   class="form-control touch-target"
+                   style="max-width: 100%; font-size: 1.1rem;"
+                   value="{{ entered_quantity|default:'' }}"
+                   placeholder="e.g. 60"
+                   required>
+        </div>
+
+        <div class="form-group">
+            <label for="rate">Rate per unit in Rupees (Rs) *</label>
+            <input type="text"
+                   name="rate"
+                   id="rate"
+                   class="form-control touch-target"
+                   style="max-width: 100%; font-size: 1.1rem;"
+                   value="{{ entered_rate|default:'' }}"
+                   placeholder="e.g. 45"
+                   required>
+        </div>
+
+        <div class="form-group">
+            <label for="invoice_no">Invoice No (optional)</label>
+            <input type="text"
+                   name="invoice_no"
+                   id="invoice_no"
+                   class="form-control"
+                   style="max-width: 100%;"
+                   value="{{ entered_invoice_no|default:'' }}"
+                   placeholder="e.g. INV-1001">
+        </div>
+
+        <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+            <button type="submit" class="btn btn-primary btn-big">Save Purchase</button>
+            <a href="{% url 'purchase_list' %}" class="btn btn-secondary btn-big">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

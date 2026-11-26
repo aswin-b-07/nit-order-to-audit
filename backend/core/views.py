@@ -9,7 +9,20 @@ from django.http import HttpResponse, Http404
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
-from core.models import Order, Invoice, Payment, Customer, Item, ProductPrice
+from core.models import (
+    Order,
+    Invoice,
+    Payment,
+    Customer,
+    Item,
+    ProductPrice,
+    Supplier,
+    Purchase,
+    BOM,
+    BOMLine,
+    ProductionRun,
+    ProductionRunLine,
+)
 from core.pdf import format_rupees, build_invoice_pdf
 from core.permissions import get_roles, can, require, orders_for_user
 from core.services import (
@@ -25,6 +38,11 @@ from core.services import (
     record_payment,
     cancel_invoice,
     place_order,
+    record_purchase,
+    record_production_run,
+    variance_bp,
+    is_flagged,
+    to_base,
 )
 
 
@@ -49,6 +67,10 @@ def _base_context(user):
         "can_record_payment": can(user, "record_payment"),
         "can_cancel_invoice": can(user, "cancel_invoice"),
         "can_download_invoice_pdf": can(user, "download_invoice_pdf"),
+        "is_production": "production" in roles or getattr(user, "is_superuser", False),
+        "can_record_purchase": can(user, "record_purchase"),
+        "can_record_production_run": can(user, "record_production_run"),
+        "can_view_production": can(user, "view_production"),
     }
 
 
@@ -692,3 +714,374 @@ def download_invoice_pdf_view(request, invoice_id):
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+# --- Production and Purchase Views ---
+
+def _require_production(user):
+    """Enforce production role or superuser. Raise PermissionDenied if not allowed."""
+    roles = get_roles(user)
+    if "production" not in roles and not getattr(user, "is_superuser", False):
+        raise PermissionDenied("You do not have permission to access production screens.")
+
+
+def _base_unit_display(unit: str) -> str:
+    if unit == "g":
+        return "kg"
+    elif unit == "ml":
+        return "L"
+    return "pcs"
+
+
+def _format_base_quantity(base_qty: int, base_unit: str) -> str:
+    d = Decimal(base_qty)
+    if base_unit == "g":
+        val = d / Decimal("1000")
+        val_str = f"{val:f}".rstrip('0').rstrip('.') if '.' in f"{val:f}" else f"{val:f}"
+        return f"{val_str} kg"
+    elif base_unit == "ml":
+        val = d / Decimal("1000")
+        val_str = f"{val:f}".rstrip('0').rstrip('.') if '.' in f"{val:f}" else f"{val:f}"
+        return f"{val_str} L"
+    return f"{base_qty} pcs"
+
+
+def _format_variance_bp(var_bp: int) -> str:
+    # 500 bp = 5.00%
+    sign = "+" if var_bp > 0 else ""
+    pct = Decimal(var_bp) / Decimal("100")
+    return f"{sign}{pct:.2f}%"
+
+
+@login_required
+def purchase_list(request):
+    _require_production(request.user)
+
+    purchases = Purchase.objects.select_related("supplier", "item").order_by("-id")
+    purchases_data = []
+    for p in purchases:
+        purchases_data.append({
+            "purchase": p,
+            "quantity_display": _format_base_quantity(p.quantity, p.item.base_unit),
+            "total_formatted": format_rupees(p.total_value_paise),
+        })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "purchases_data": purchases_data,
+    })
+    return render(request, "core/purchase_list.html", ctx)
+
+
+@login_required
+def purchase_create(request):
+    _require_production(request.user)
+
+    suppliers = Supplier.objects.all().order_by("name")
+    items = Item.objects.filter(kind__in=[Item.Kind.RAW, Item.Kind.PACKAGING]).order_by("name")
+
+    form_errors = []
+    selected_supplier_id = ""
+    selected_item_id = ""
+    entered_quantity = ""
+    entered_rate = ""
+    entered_invoice_no = ""
+
+    if request.method == "POST":
+        selected_supplier_id = request.POST.get("supplier", "").strip()
+        selected_item_id = request.POST.get("item", "").strip()
+        entered_quantity = request.POST.get("quantity", "").strip()
+        entered_rate = request.POST.get("rate", "").strip()
+        entered_invoice_no = request.POST.get("invoice_no", "").strip()
+
+        # Validate supplier
+        supplier = None
+        if not selected_supplier_id:
+            form_errors.append("Supplier is required.")
+        else:
+            try:
+                supplier = Supplier.objects.get(id=int(selected_supplier_id))
+            except (ValueError, Supplier.DoesNotExist):
+                form_errors.append("Selected supplier is invalid.")
+
+        # Validate item
+        item = None
+        if not selected_item_id:
+            form_errors.append("Item is required.")
+        else:
+            try:
+                item = Item.objects.get(id=int(selected_item_id))
+            except (ValueError, Item.DoesNotExist):
+                form_errors.append("Selected item is invalid.")
+
+        # Validate quantity
+        d_qty = None
+        if not entered_quantity:
+            form_errors.append("Quantity is required.")
+        else:
+            try:
+                d_qty = Decimal(entered_quantity)
+                if d_qty <= 0:
+                    form_errors.append("Quantity must be greater than 0.")
+            except (InvalidOperation, TypeError):
+                form_errors.append("Quantity must be a valid number.")
+
+        # Validate rate
+        d_rate = None
+        if not entered_rate:
+            form_errors.append("Rate is required.")
+        else:
+            try:
+                d_rate = Decimal(entered_rate)
+                if d_rate <= 0:
+                    form_errors.append("Rate must be greater than 0.")
+            except (InvalidOperation, TypeError):
+                form_errors.append("Rate must be a valid number.")
+
+        if not form_errors and item and supplier and d_qty is not None and d_rate is not None:
+            # Map item's display unit to purchase unit
+            # Base units: g -> kg, ml -> l, pcs -> pcs
+            if item.base_unit == Item.BaseUnit.G:
+                unit = "kg"
+            elif item.base_unit == Item.BaseUnit.ML:
+                unit = "l"
+            else:
+                unit = "pcs"
+
+            today = timezone.localdate()
+            try:
+                record_purchase(
+                    item=item,
+                    amount=d_qty,
+                    unit=unit,
+                    rate_rupees=d_rate,
+                    supplier=supplier,
+                    purchase_date=today,
+                    invoice_no=entered_invoice_no,
+                    user=request.user,
+                )
+                messages.success(request, "Purchase recorded successfully.")
+                return redirect("purchase_list")
+            except ValueError as e:
+                form_errors.append(str(e))
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "suppliers": suppliers,
+        "items": items,
+        "selected_supplier_id": selected_supplier_id,
+        "selected_item_id": selected_item_id,
+        "entered_quantity": entered_quantity,
+        "entered_rate": entered_rate,
+        "entered_invoice_no": entered_invoice_no,
+        "form_errors": form_errors,
+    })
+    return render(request, "core/purchase_new.html", ctx)
+
+
+@login_required
+def production_list(request):
+    _require_production(request.user)
+
+    runs = ProductionRun.objects.select_related("bom__product").order_by("-id")
+    runs_data = []
+    for r in runs:
+        runs_data.append({
+            "run": r,
+            "yield_variance_pct": _format_variance_bp(r.yield_variance_bp),
+        })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "runs_data": runs_data,
+    })
+    return render(request, "core/production_list.html", ctx)
+
+
+@login_required
+def production_create(request):
+    _require_production(request.user)
+
+    boms = BOM.objects.select_related("product").all().order_by("product__name")
+    products = [b.product for b in boms]
+
+    # Default to Murukku 200 g if available, else first
+    default_bom = None
+    for b in boms:
+        if b.product.name == "Murukku 200 g":
+            default_bom = b
+            break
+    if not default_bom and boms.exists():
+        default_bom = boms.first()
+
+    selected_product_id = request.POST.get("product", "") if request.method == "POST" else (default_bom.product.id if default_bom else "")
+    active_bom = None
+    if selected_product_id:
+        try:
+            active_bom = BOM.objects.get(product_id=int(selected_product_id))
+        except (ValueError, BOM.DoesNotExist):
+            active_bom = default_bom
+
+    bom_lines = list(active_bom.lines.select_related("item").all()) if active_bom else []
+
+    form_errors = []
+    entered_good_packets = request.POST.get("actual_good_packets", "").strip() if request.method == "POST" else ""
+    entered_damaged_pouches = request.POST.get("damaged_pouches", "0").strip() if request.method == "POST" else "0"
+    entered_cartons_used = request.POST.get("cartons_used", "").strip() if request.method == "POST" else ""
+
+    if request.method == "POST":
+        if not active_bom:
+            form_errors.append("Invalid product selected.")
+
+        # Validate good packets
+        actual_output = None
+        if not entered_good_packets:
+            form_errors.append("Actual good packets is required.")
+        else:
+            try:
+                actual_output = int(entered_good_packets)
+                if actual_output < 0:
+                    form_errors.append("Actual good packets cannot be negative.")
+            except ValueError:
+                form_errors.append("Actual good packets must be a whole number.")
+
+        # Validate damaged pouches
+        damaged_qty = 0
+        if entered_damaged_pouches:
+            try:
+                damaged_qty = int(entered_damaged_pouches)
+                if damaged_qty < 0:
+                    form_errors.append("Damaged pouches cannot be negative.")
+            except ValueError:
+                form_errors.append("Damaged pouches must be a whole number.")
+
+        # Find which item is the pouch packaging, carton packaging, etc.
+        pouch_item = None
+        carton_item = None
+        for bl in bom_lines:
+            if "pouch" in bl.item.name.lower():
+                pouch_item = bl.item
+            elif "carton" in bl.item.name.lower():
+                carton_item = bl.item
+
+        # Parse carton if present in BOM
+        carton_qty_base = None
+        if carton_item:
+            if not entered_cartons_used:
+                form_errors.append("Cartons used is required.")
+            else:
+                try:
+                    d_cartons = Decimal(entered_cartons_used)
+                    if d_cartons < 0:
+                        form_errors.append("Cartons used cannot be negative.")
+                    else:
+                        carton_qty_base = to_base(d_cartons, "pcs")
+                except (InvalidOperation, TypeError, ValueError):
+                    form_errors.append("Cartons used must be a valid number.")
+
+        # Validate raw materials and packaging lines
+        lines_spec = {}
+        for bl in bom_lines:
+            item = bl.item
+            if item == pouch_item:
+                # Pouches: actual issued pouches = good packets + damaged pouches
+                # wastage = damaged pouches
+                if actual_output is not None and damaged_qty is not None:
+                    issued_pouches = actual_output + damaged_qty
+                    lines_spec[item] = {
+                        "qty": issued_pouches,
+                        "wastage": damaged_qty,
+                    }
+            elif item == carton_item:
+                if carton_qty_base is not None:
+                    lines_spec[item] = {
+                        "qty": carton_qty_base,
+                        "wastage": 0,
+                    }
+            else:
+                # Other raw materials entered by user
+                val_raw = request.POST.get(f"item_{item.id}", "").strip()
+                if not val_raw:
+                    form_errors.append(f"Quantity for {item.name} is required.")
+                else:
+                    try:
+                        d_val = Decimal(val_raw)
+                        if d_val < 0:
+                            form_errors.append(f"Quantity for {item.name} cannot be negative.")
+                        else:
+                            unit_str = "kg" if item.base_unit == "g" else ("l" if item.base_unit == "ml" else "pcs")
+                            base_qty = to_base(d_val, unit_str)
+                            lines_spec[item] = {
+                                "qty": base_qty,
+                                "wastage": 0,
+                            }
+                    except (InvalidOperation, TypeError, ValueError):
+                        form_errors.append(f"Quantity for {item.name} must be a valid number.")
+
+        if not form_errors and active_bom and actual_output is not None:
+            try:
+                run = record_production_run(
+                    bom=active_bom,
+                    actual_output=actual_output,
+                    lines=lines_spec,
+                    user=request.user,
+                )
+                messages.success(request, f"Production run #{run.id} recorded successfully.")
+                return redirect("production_detail", run_id=run.id)
+            except ValueError as e:
+                form_errors.append(str(e))
+
+    bom_lines_data = []
+    for bl in bom_lines:
+        # Don't show pouch and carton in raw material inputs if handled separately, or show only raw materials
+        # Check: prompt says: "one issued-quantity field per BOM raw material (in display units), actual good packets, damaged pouches, cartons used."
+        if bl.item.kind == Item.Kind.RAW:
+            disp_unit = _base_unit_display(bl.item.base_unit)
+            std_disp = Decimal(bl.quantity) / Decimal("1000") if bl.item.base_unit in ["g", "ml"] else Decimal(bl.quantity)
+            std_disp_str = f"{std_disp:f}".rstrip('0').rstrip('.') if '.' in f"{std_disp:f}" else f"{std_disp:f}"
+            bom_lines_data.append({
+                "item": bl.item,
+                "display_unit": disp_unit,
+                "standard_display": std_disp_str,
+                "entered_val": request.POST.get(f"item_{bl.item.id}", "").strip() if request.method == "POST" else "",
+            })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "products": products,
+        "selected_product_id": selected_product_id,
+        "bom_lines_data": bom_lines_data,
+        "entered_good_packets": entered_good_packets,
+        "entered_damaged_pouches": entered_damaged_pouches,
+        "entered_cartons_used": entered_cartons_used,
+        "form_errors": form_errors,
+    })
+    return render(request, "core/production_new.html", ctx)
+
+
+@login_required
+def production_detail(request, run_id):
+    _require_production(request.user)
+
+    run = get_object_or_404(ProductionRun.objects.select_related("bom__product", "created_by"), id=run_id)
+    lines = run.lines.select_related("item").all().order_by("id")
+
+    lines_data = []
+    for line in lines:
+        lines_data.append({
+            "item": line.item,
+            "planned_display": _format_base_quantity(line.standard_qty, line.item.base_unit),
+            "actual_display": _format_base_quantity(line.actual_qty, line.item.base_unit),
+            "variance_pct": _format_variance_bp(line.variance_bp),
+            "flagged": line.flagged,
+        })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "run": run,
+        "lines_data": lines_data,
+        "yield_variance_pct": _format_variance_bp(run.yield_variance_bp),
+        "material_cost_formatted": format_rupees(run.material_cost_paise),
+    })
+    return render(request, "core/production_detail.html", ctx)
+

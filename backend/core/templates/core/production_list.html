@@ -1,0 +1,55 @@
+{% extends "core/base.html" %}
+
+{% block title %}Production Runs - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
+        <h2>Production Runs</h2>
+        {% if can_record_production_run %}
+            <a href="{% url 'production_create' %}" class="btn btn-primary touch-target">Record Production Run</a>
+        {% endif %}
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Run #</th>
+                <th>Date</th>
+                <th>Product</th>
+                <th>Expected Yield</th>
+                <th>Actual Output</th>
+                <th>Yield Variance</th>
+                <th>Yield Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in runs_data %}
+                <tr>
+                    <td data-label="Run #">#{{ r.run.id }}</td>
+                    <td data-label="Date">{{ r.run.created_at|date:"Y-m-d" }}</td>
+                    <td data-label="Product">{{ r.run.bom.product.name }}</td>
+                    <td data-label="Expected Yield">{{ r.run.expected_output }} pcs</td>
+                    <td data-label="Actual Output">{{ r.run.actual_output }} pcs</td>
+                    <td data-label="Yield Variance">{{ r.yield_variance_pct }}</td>
+                    <td data-label="Yield Status">
+                        {% if r.run.yield_flagged %}
+                            <span class="badge" style="background-color: #e53e3e; color: white; font-weight: bold;">FLAGGED</span>
+                        {% else %}
+                            <span class="badge" style="background-color: #38a169; color: white;">OK</span>
+                        {% endif %}
+                    </td>
+                    <td data-label="Action">
+                        <a href="{% url 'production_detail' r.run.id %}" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">View</a>
+                    </td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="8">No production runs recorded yet.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

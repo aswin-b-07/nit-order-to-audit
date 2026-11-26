@@ -25,6 +25,10 @@
                 {% if can_view_invoices %}
                     <a href="{% url 'invoice_list' %}">Invoices</a>
                 {% endif %}
+                {% if is_production %}
+                    <a href="{% url 'purchase_list' %}">Purchase</a>
+                    <a href="{% url 'production_list' %}">Production</a>
+                {% endif %}
             </nav>
         {% endif %}
         <div class="nav-user">

@@ -1,0 +1,76 @@
+{% extends "core/base.html" %}
+
+{% block title %}Production Run #{{ run.id }} - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
+        <h2>Production Run #{{ run.id }}</h2>
+        <a href="{% url 'production_list' %}" class="btn btn-secondary">Back to List</a>
+    </div>
+
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem;">
+        <p><strong>Product:</strong> {{ run.bom.product.name }}</p>
+        <p><strong>Date:</strong> {{ run.created_at|date:"Y-m-d H:i" }}</p>
+        <p><strong>Created By:</strong> {{ run.created_by.username|default:"-" }}</p>
+        <p><strong>Batches:</strong> {{ run.batches }}</p>
+        <p><strong>Total Material Cost:</strong> Rs {{ material_cost_formatted }}</p>
+    </div>
+
+    <h3>Yield Summary</h3>
+    <table style="margin-bottom: 2rem;">
+        <thead>
+            <tr>
+                <th>Expected Yield</th>
+                <th>Actual Output</th>
+                <th>Variance %</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td data-label="Expected Yield">{{ run.expected_output }} pcs</td>
+                <td data-label="Actual Output">{{ run.actual_output }} pcs</td>
+                <td data-label="Variance %">{{ yield_variance_pct }}</td>
+                <td data-label="Status">
+                    {% if run.yield_flagged %}
+                        <span class="badge" style="background-color: #e53e3e; color: white; font-weight: bold;">FLAGGED</span>
+                    {% else %}
+                        <span class="badge" style="background-color: #38a169; color: white;">OK</span>
+                    {% endif %}
+                </td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Consumption: Planned vs Actual</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Planned</th>
+                <th>Actual</th>
+                <th>Variance %</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in lines_data %}
+                <tr>
+                    <td data-label="Item">{{ line.item.name }}</td>
+                    <td data-label="Planned">{{ line.planned_display }}</td>
+                    <td data-label="Actual">{{ line.actual_display }}</td>
+                    <td data-label="Variance %">{{ line.variance_pct }}</td>
+                    <td data-label="Status">
+                        {% if line.flagged %}
+                            <span class="badge" style="background-color: #e53e3e; color: white; font-weight: bold;">FLAGGED</span>
+                        {% else %}
+                            <span class="badge" style="background-color: #38a169; color: white;">OK</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
