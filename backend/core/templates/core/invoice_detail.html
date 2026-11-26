@@ -1,0 +1,158 @@
+{% extends "core/base.html" %}
+
+{% block title %}Invoice {{ invoice.number }} - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>Invoice {{ invoice.number }}</h2>
+        <div>
+            <span class="badge" style="font-size: 1.1rem; font-weight: bold; margin-right: 1rem;">{{ invoice.status }}</span>
+            <a href="{% url 'download_invoice_pdf' invoice.id %}" class="btn btn-secondary">Download PDF</a>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+        <div>
+            <p><strong>Date:</strong> {{ invoice.invoice_date|date:"d-m-Y" }}</p>
+            <p><strong>Financial Year:</strong> {{ invoice.fy }}</p>
+            <p><strong>Customer:</strong> {{ invoice.customer_name }}</p>
+            <p><strong>Customer GSTIN:</strong> {{ invoice.customer_gstin|default:"Unregistered" }}</p>
+        </div>
+        <div>
+            <p><strong>Supply Type:</strong> {{ invoice.supply_type }}</p>
+            <p><strong>Order:</strong> <a href="{% url 'order_detail' invoice.order.id %}">#{{ invoice.order.id }}</a></p>
+            <p><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
+        </div>
+    </div>
+
+    <h3>Line Items</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th>HSN</th>
+                <th>Qty</th>
+                <th>Unit Price (Rs)</th>
+                <th>Taxable (Rs)</th>
+                {% if invoice.supply_type == "INTRA" %}
+                    <th>CGST (Rs)</th>
+                    <th>SGST (Rs)</th>
+                {% else %}
+                    <th>IGST (Rs)</th>
+                {% endif %}
+                <th>Total (Rs)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in lines_data %}
+                <tr>
+                    <td>{{ l.line.description }}</td>
+                    <td>{{ l.line.hsn_code }}</td>
+                    <td>{{ l.line.quantity }}</td>
+                    <td>Rs {{ l.unit_price_formatted }}</td>
+                    <td>Rs {{ l.taxable_formatted }}</td>
+                    {% if invoice.supply_type == "INTRA" %}
+                        <td>Rs {{ l.cgst_formatted }}</td>
+                        <td>Rs {{ l.sgst_formatted }}</td>
+                    {% else %}
+                        <td>Rs {{ l.igst_formatted }}</td>
+                    {% endif %}
+                    <td>Rs {{ l.total_formatted }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+        <div style="min-width: 250px;">
+            <p><strong>Taxable Amount:</strong> Rs {{ taxable_formatted }}</p>
+            {% if invoice.supply_type == "INTRA" %}
+                <p><strong>CGST:</strong> Rs {{ cgst_formatted }}</p>
+                <p><strong>SGST:</strong> Rs {{ sgst_formatted }}</p>
+            {% else %}
+                <p><strong>IGST:</strong> Rs {{ igst_formatted }}</p>
+            {% endif %}
+            <p><strong>Total Amount:</strong> Rs {{ total_formatted }}</p>
+            <p><strong>Paid So Far:</strong> Rs {{ paid_formatted }}</p>
+            <h3 style="color: #2b6cb0;">Outstanding: Rs {{ outstanding_formatted }}</h3>
+        </div>
+    </div>
+
+    <div style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1rem;">
+        <h3>Payments Received</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Mode</th>
+                    <th>Reference</th>
+                    <th>Amount (Rs)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in payments_data %}
+                    <tr>
+                        <td>{{ p.payment.payment_date|date:"d-m-Y" }}</td>
+                        <td>{{ p.payment.mode }}</td>
+                        <td>{{ p.payment.reference|default:"-" }}</td>
+                        <td>Rs {{ p.amount_formatted }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="4">No payments recorded yet.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if invoice.status == "ISSUED" %}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+            <div class="card" style="margin-bottom: 0;">
+                <h4>Record Payment</h4>
+                <form method="post" action="{% url 'invoice_detail' invoice.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="record_payment">
+                    <div class="form-group">
+                        <label for="id_amount">Amount (Rupees):</label>
+                        <input type="text" name="amount" id="id_amount" class="form-control" placeholder="e.g. 5000.00" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="id_date">Date:</label>
+                        <input type="date" name="date" id="id_date" class="form-control" value="{{ today|date:'Y-m-d' }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="id_mode">Mode:</label>
+                        <select name="mode" id="id_mode" class="form-control" required>
+                            <option value="BANK">Bank Transfer</option>
+                            <option value="CASH">Cash</option>
+                            <option value="CHEQUE">Cheque</option>
+                            <option value="UPI">UPI</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="id_reference">Reference:</label>
+                        <input type="text" name="reference" id="id_reference" class="form-control" placeholder="Cheque / UTR / Note">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Record Payment</button>
+                </form>
+            </div>
+
+            <div class="card" style="margin-bottom: 0;">
+                <h4 class="text-danger">Cancel Invoice</h4>
+                <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
+                <form method="post" action="{% url 'invoice_detail' invoice.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="cancel_invoice">
+                    <div class="form-group">
+                        <label for="id_cancel_reason">Reason for cancellation:</label>
+                        <textarea name="reason" id="id_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-danger">Cancel Invoice</button>
+                </form>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

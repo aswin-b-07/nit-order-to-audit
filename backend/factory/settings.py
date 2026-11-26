@@ -138,4 +138,7 @@ FACTORY_STATE_CODE = "33"
 FACTORY_STATE_NAME = "Tamil Nadu"
 FACTORY_ADDRESS = "Coimbatore, Tamil Nadu"
 
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/"
+
 

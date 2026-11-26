@@ -1,0 +1,139 @@
+{% extends "core/base.html" %}
+
+{% block title %}Order #{{ order.id }} - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h2>Order #{{ order.id }}</h2>
+        <span class="badge" style="font-size: 1.1rem; font-weight: bold;">{{ order.status }}</span>
+    </div>
+
+    <p><strong>Customer:</strong> {{ order.customer.name }}</p>
+    <p><strong>Salesman:</strong> {{ order.salesman.username }}</p>
+    <p><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
+    {% if order.reject_reason %}
+        <p><strong class="text-danger">Reject Reason:</strong> {{ order.reject_reason }}</p>
+    {% endif %}
+
+    <h3>Order Lines</h3>
+    {% if order.status == "SUBMITTED" %}
+        <form method="post" action="{% url 'order_detail' order.id %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_lines">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Quantity</th>
+                        <th>Unit Price (Rs)</th>
+                        <th>Line Total (Rs)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for l in lines_data %}
+                        <tr>
+                            <td>{{ l.line.product.name }}</td>
+                            <td>
+                                <input type="number" name="qty_{{ l.line.id }}" value="{{ l.line.quantity }}" min="1" class="form-control" style="width: 100px;" required>
+                            </td>
+                            <td>
+                                <input type="text" name="price_{{ l.line.id }}" value="{{ l.unit_price_rupees }}" class="form-control" style="width: 120px;">
+                            </td>
+                            <td>Rs {{ l.line_total_formatted }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <button type="submit" class="btn btn-secondary">Update Lines</button>
+                <h3>Total: Rs {{ order_total_formatted }}</h3>
+            </div>
+        </form>
+    {% else %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Quantity</th>
+                    <th>Unit Price (Rs)</th>
+                    <th>Line Total (Rs)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for l in lines_data %}
+                    <tr>
+                        <td>{{ l.line.product.name }}</td>
+                        <td>{{ l.line.quantity }}</td>
+                        <td>Rs {{ l.unit_price_formatted }}</td>
+                        <td>Rs {{ l.line_total_formatted }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div style="text-align: right;">
+            <h3>Total: Rs {{ order_total_formatted }}</h3>
+        </div>
+    {% endif %}
+
+    <div style="margin-top: 1.5rem;">
+        <h3>Stock Availability Report</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Ordered</th>
+                    <th>Available</th>
+                    <th>Shortage</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rep in stock_rep %}
+                    <tr>
+                        <td>{{ rep.product.name }}</td>
+                        <td>{{ rep.ordered }}</td>
+                        <td>{{ rep.available }}</td>
+                        <td {% if rep.shortage > 0 %}class="text-danger"{% endif %}>
+                            {{ rep.shortage }}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="actions-row" style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+        {% if order.status == "SUBMITTED" %}
+            <form method="post" action="{% url 'order_detail' order.id %}" class="form-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="approve">
+                <button type="submit" class="btn btn-primary">Approve Order</button>
+            </form>
+
+            <form method="post" action="{% url 'order_detail' order.id %}" style="display: flex; gap: 0.5rem; align-items: center;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reject">
+                <input type="text" name="reason" placeholder="Rejection reason" class="form-control" required>
+                <button type="submit" class="btn btn-danger">Reject Order</button>
+            </form>
+        {% elif order.status == "APPROVED" %}
+            <form method="post" action="{% url 'order_detail' order.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="create_invoice">
+                <button type="submit" class="btn btn-primary">Create Invoice</button>
+            </form>
+        {% elif order.status == "INVOICED" %}
+            <form method="post" action="{% url 'order_detail' order.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="record_dispatch">
+                <button type="submit" class="btn btn-primary">Record Dispatch</button>
+            </form>
+        {% elif order.status == "DISPATCHED" %}
+            <p style="color: green; font-weight: bold;">Order dispatched.</p>
+            {% if invoice %}
+                <a href="{% url 'invoice_detail' invoice.id %}" class="btn btn-secondary">View Invoice {{ invoice.number }}</a>
+            {% endif %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

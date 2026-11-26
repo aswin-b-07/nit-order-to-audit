@@ -1,0 +1,23 @@
+{% extends "core/base.html" %}
+
+{% block title %}Home - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Welcome, {{ user.username }}</h2>
+    <p>Role: <strong>{{ user_role }}</strong></p>
+
+    <div style="margin-top: 1.5rem;">
+        {% if is_admin %}
+            <h3>Admin Portal</h3>
+            <ul>
+                <li><a href="{% url 'order_list' %}">Orders</a></li>
+                <li><a href="{% url 'invoice_list' %}">Invoices</a></li>
+            </ul>
+        {% else %}
+            <h3>Portal</h3>
+            <p>Your role dashboard is coming soon.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

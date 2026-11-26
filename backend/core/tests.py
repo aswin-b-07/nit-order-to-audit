@@ -1788,4 +1788,244 @@ class RunBenchmarkCommandTest(TestCase):
         self.assertEqual(Invoice.objects.count(), 1)
 
 
+# ---------------------------------------------------------------------------
+# Phase 6b-1: Admin screens tests
+# ---------------------------------------------------------------------------
+
+from django.test import Client
+from django.urls import reverse
+
+class AdminScreensTests(TestCase):
+    def setUp(self):
+        call_command("seed_benchmark")
+        call_command("seed_users", verbosity=0)
+
+        User = get_user_model()
+        self.salesman_a = User.objects.get(username="salesman_a")
+        self.admin1 = User.objects.get(username="admin1")
+
+        self.supplier = Supplier.objects.create(name="Test Supplier", gstin="33AABBCCDDEE1Z5")
+        self.flour = Item.objects.get(name="Flour")
+        self.oil = Item.objects.get(name="Cooking oil")
+        self.spice = Item.objects.get(name="Salt and spice mix")
+        self.pouch = Item.objects.get(name="200 g pouch")
+        self.carton = Item.objects.get(name="Carton")
+        self.murukku = Item.objects.get(name="Murukku 200 g")
+        self.bom = BOM.objects.get(product=self.murukku)
+
+        # Buy 60 kg flour at Rs 45
+        record_purchase(
+            self.flour,
+            "60",
+            "kg",
+            "45",
+            self.supplier,
+            date(2026, 11, 24),
+            invoice_no="INV-SETUP",
+            user=self.admin1,
+        )
+
+        # Benchmark production run (188 packets)
+        record_production_run(
+            self.bom,
+            188,
+            {
+                self.flour: {"qty": 40000},
+                self.oil: {"qty": 10500},
+                self.spice: {"qty": 1200},
+                self.pouch: {"qty": 194, "wastage": 6},
+                self.carton: {"qty": 9},
+            },
+            user=self.admin1,
+        )
+
+        self.client = Client()
+
+    def test_anonymous_and_role_access(self):
+        # anonymous GET of the order list redirects to the login page
+        resp = self.client.get(reverse("order_list"))
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("login"), resp.url)
+
+        # a salesman user gets 403 on the order list
+        self.client.force_login(self.salesman_a)
+        resp_salesman = self.client.get(reverse("order_list"))
+        self.assertEqual(resp_salesman.status_code, 403)
+
+        # the admin user gets 200
+        self.client.force_login(self.admin1)
+        resp_admin = self.client.get(reverse("order_list"))
+        self.assertEqual(resp_admin.status_code, 200)
+
+        # the home page for the admin user contains the Orders link
+        resp_home = self.client.get(reverse("home"))
+        self.assertEqual(resp_home.status_code, 200)
+        self.assertContains(resp_home, "Orders")
+        self.assertContains(resp_home, reverse("order_list"))
+
+    def test_retailer_a_flow(self):
+        retailer_a = Customer.objects.get(name="Retailer A")
+        # Retailer A flow through the Client: place the order with place_order (150 packets)
+        order = place_order(retailer_a, self.salesman_a, [(self.murukku, 150)])
+
+        self.client.force_login(self.admin1)
+
+        # the admin POSTs approve
+        resp_approve = self.client.post(reverse("order_detail", args=[order.id]), {"action": "approve"})
+        self.assertEqual(resp_approve.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.APPROVED)
+
+        # then create invoice
+        resp_invoice = self.client.post(reverse("order_detail", args=[order.id]), {"action": "create_invoice"})
+        self.assertEqual(resp_invoice.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.INVOICED)
+        self.assertTrue(hasattr(order, "invoice"))
+        inv = order.invoice
+        # afterwards the invoice total is 787500
+        self.assertEqual(inv.total_paise, 787500)
+
+        # then dispatch
+        resp_dispatch = self.client.post(reverse("order_detail", args=[order.id]), {"action": "record_dispatch"})
+        self.assertEqual(resp_dispatch.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.DISPATCHED)
+        # the Murukku 200 g balance is 88
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # and the order detail page contains "7,875.00"
+        resp_detail = self.client.get(reverse("order_detail", args=[order.id]))
+        self.assertEqual(resp_detail.status_code, 200)
+        self.assertContains(resp_detail, "7,875.00")
+
+    def test_payment_recording_and_validation(self):
+        retailer_a = Customer.objects.get(name="Retailer A")
+        order = place_order(retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, user=self.admin1)
+        inv = create_invoice(order, user=self.admin1)
+        record_dispatch(inv, user=self.admin1)
+
+        self.client.force_login(self.admin1)
+
+        # posting "4000.555" or "abc" shows an error message and creates no Payment
+        resp_err1 = self.client.post(
+            reverse("invoice_detail", args=[inv.id]),
+            {"action": "record_payment", "amount": "4000.555", "mode": "BANK", "date": "2026-11-26"},
+        )
+        self.assertEqual(resp_err1.status_code, 200)
+        self.assertContains(resp_err1, "cannot have more than 2 decimal places")
+        self.assertEqual(Payment.objects.filter(invoice=inv).count(), 0)
+
+        resp_err2 = self.client.post(
+            reverse("invoice_detail", args=[inv.id]),
+            {"action": "record_payment", "amount": "abc", "mode": "BANK", "date": "2026-11-26"},
+        )
+        self.assertEqual(resp_err2.status_code, 200)
+        self.assertContains(resp_err2, "Invalid amount format")
+        self.assertEqual(Payment.objects.filter(invoice=inv).count(), 0)
+
+        # posting a payment of "4000" rupees gives invoice_outstanding 387500
+        resp_pay = self.client.post(
+            reverse("invoice_detail", args=[inv.id]),
+            {"action": "record_payment", "amount": "4000", "mode": "UPI", "date": "2026-11-26"},
+        )
+        self.assertEqual(resp_pay.status_code, 302)
+        self.assertEqual(invoice_outstanding(inv), 387500)
+
+    def test_distributor_b_shortage_and_line_edit(self):
+        # Distributor B: place_order 120
+        distributor_b = Customer.objects.get(name="Distributor B")
+
+        # Murukku stock after setUp is 50 + 188 = 238
+        # We need available stock to be 88 so ordering 120 creates shortage of 32
+        # Let's place and dispatch an order of 150 first
+        retailer_a = Customer.objects.get(name="Retailer A")
+        order_a = place_order(retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order_a, user=self.admin1)
+        inv_a = create_invoice(order_a, user=self.admin1)
+        record_dispatch(inv_a, user=self.admin1)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # Place order for 120
+        order_b = place_order(distributor_b, self.salesman_a, [(self.murukku, 120)])
+
+        self.client.force_login(self.admin1)
+
+        # the order detail page shows a shortage of 32
+        resp_detail = self.client.get(reverse("order_detail", args=[order_b.id]))
+        self.assertEqual(resp_detail.status_code, 200)
+        self.assertContains(resp_detail, "32")
+
+        # and the Approve POST does NOT approve it (status still SUBMITTED, the response page contains "32")
+        resp_approve = self.client.post(reverse("order_detail", args=[order_b.id]), {"action": "approve"})
+        self.assertEqual(resp_approve.status_code, 200)
+        order_b.refresh_from_db()
+        self.assertEqual(order_b.status, Order.Status.SUBMITTED)
+        self.assertContains(resp_approve, "32")
+
+        # after posting the line edit to quantity 88, approving works
+        line = order_b.lines.get(product=self.murukku)
+        resp_edit = self.client.post(
+            reverse("order_detail", args=[order_b.id]),
+            {"action": "update_lines", f"qty_{line.id}": "88", f"price_{line.id}": "50.00"},
+        )
+        self.assertEqual(resp_edit.status_code, 302)
+        line.refresh_from_db()
+        self.assertEqual(line.quantity, 88)
+
+        resp_approve2 = self.client.post(reverse("order_detail", args=[order_b.id]), {"action": "approve"})
+        self.assertEqual(resp_approve2.status_code, 302)
+        order_b.refresh_from_db()
+        self.assertEqual(order_b.status, Order.Status.APPROVED)
+
+    def test_pdf_download(self):
+        retailer_a = Customer.objects.get(name="Retailer A")
+        order = place_order(retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, user=self.admin1)
+        inv = create_invoice(order, user=self.admin1)
+
+        self.client.force_login(self.admin1)
+
+        # PDF download: GET returns status 200, content type application/pdf,
+        # the body starts with b"%PDF", and the Content-Disposition header contains "attachment"
+        resp = self.client.get(reverse("download_invoice_pdf", args=[inv.id]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content.startswith(b"%PDF"))
+        self.assertIn("attachment", resp["Content-Disposition"])
+
+    def test_invoice_cancellation(self):
+        retailer_a = Customer.objects.get(name="Retailer A")
+        order = place_order(retailer_a, self.salesman_a, [(self.murukku, 150)])
+        approve_order(order, user=self.admin1)
+        inv = create_invoice(order, user=self.admin1)
+        record_dispatch(inv, user=self.admin1)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        self.client.force_login(self.admin1)
+
+        # cancel with an empty reason shows an error and does not cancel
+        resp_empty = self.client.post(
+            reverse("invoice_detail", args=[inv.id]),
+            {"action": "cancel_invoice", "reason": "   "},
+        )
+        self.assertEqual(resp_empty.status_code, 200)
+        self.assertContains(resp_empty, "Cancellation reason must not be empty")
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, Invoice.Status.ISSUED)
+        self.assertEqual(get_balance(self.murukku), 88)
+
+        # with a reason it cancels and the stock returns
+        resp_cancel = self.client.post(
+            reverse("invoice_detail", args=[inv.id]),
+            {"action": "cancel_invoice", "reason": "Wrong billing address"},
+        )
+        self.assertEqual(resp_cancel.status_code, 302)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, Invoice.Status.CANCELLED)
+        self.assertEqual(get_balance(self.murukku), 238)
+
+
+
 
