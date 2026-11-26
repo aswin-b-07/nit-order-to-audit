@@ -20,4 +20,6 @@ urlpatterns = [
     path('production/', views.production_list, name='production_list'),
     path('production/new/', views.production_create, name='production_create'),
     path('production/<int:run_id>/', views.production_detail, name='production_detail'),
+    path('reports/', views.reports_list, name='reports_list'),
+    path('reports/<slug:name>/csv/', views.report_download_csv, name='report_download_csv'),
 ]

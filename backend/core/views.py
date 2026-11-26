@@ -74,6 +74,7 @@ def _base_context(user):
         "can_record_purchase": can(user, "record_purchase"),
         "can_record_production_run": can(user, "record_production_run"),
         "can_view_production": can(user, "view_production"),
+        "can_view_reports": can(user, "view_reports"),
     }
 
 
@@ -1187,4 +1188,200 @@ def production_detail(request, run_id):
         "margin_pct_display": margin_pct_display,
     })
     return render(request, "core/production_detail.html", ctx)
+
+
+def _require_reports_access(user):
+    """Enforce reports access for accountant, owner, admin, and superuser."""
+    if not (can(user, "view_reports") or getattr(user, "is_superuser", False)):
+        raise PermissionDenied("You do not have permission to view reports.")
+
+
+def _parse_report_dates(request):
+    """
+    Parse 'from' and 'to' GET parameters into date objects.
+    Invalid dates return an error message, otherwise None.
+    """
+    from_raw = request.GET.get("from", "").strip()
+    to_raw = request.GET.get("to", "").strip()
+    date_from = None
+    date_to = None
+    error = None
+
+    if from_raw:
+        try:
+            date_from = date.fromisoformat(from_raw)
+        except ValueError:
+            error = f"Invalid 'from' date: {from_raw}. Expected YYYY-MM-DD."
+
+    if to_raw and not error:
+        try:
+            date_to = date.fromisoformat(to_raw)
+        except ValueError:
+            error = f"Invalid 'to' date: {to_raw}. Expected YYYY-MM-DD."
+
+    return date_from, date_to, from_raw, to_raw, error
+
+
+def _get_report_definitions():
+    """Return dictionary of supported reports and their metadata."""
+    from core import reports
+    return {
+        "sales-register": {
+            "name": "sales-register",
+            "title": "Sales Register",
+            "description": "Invoice register with tax and customer details.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.sales_register(df, dt)),
+        },
+        "stock-summary": {
+            "name": "stock-summary",
+            "title": "Stock Summary",
+            "description": "Opening, receipts, issues, adjustments, and closing stock for all items.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv_stock_summary(reports.stock_summary(df, dt)),
+        },
+        "stock-ledger": {
+            "name": "stock-ledger",
+            "title": "Stock Ledger",
+            "description": "Movement ledger across all items.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: _generate_all_stock_ledgers_csv(df, dt),
+        },
+        "customer-sales": {
+            "name": "customer-sales",
+            "title": "Customer Sales",
+            "description": "Sales breakdown aggregated by customer.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.customer_sales(df, dt)),
+        },
+        "product-sales": {
+            "name": "product-sales",
+            "title": "Product Sales",
+            "description": "Sales breakdown aggregated by product.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.product_sales(df, dt)),
+        },
+        "gst-summary": {
+            "name": "gst-summary",
+            "title": "GST Summary",
+            "description": "GST rates, supply types, and GSTR-3B summary.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.gst_summary(df, dt)),
+        },
+        "purchase-register": {
+            "name": "purchase-register",
+            "title": "Purchase Register",
+            "description": "Purchases by supplier, item, display unit, and rate.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.purchase_register(df, dt)),
+        },
+        "production-report": {
+            "name": "production-report",
+            "title": "Production Report",
+            "description": "Production runs, actual vs standard quantities, variance, and yield.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.production_report(df, dt)),
+        },
+        "payments": {
+            "name": "payments",
+            "title": "Payments Report",
+            "description": "Customer payments received per invoice.",
+            "has_date_filter": True,
+            "generator": lambda df, dt: reports.to_csv(reports.payments_report(df, dt)),
+        },
+        "receivables-ageing": {
+            "name": "receivables-ageing",
+            "title": "Receivables Ageing",
+            "description": "Outstanding invoices by ageing buckets (0-30, 31-60, 61-90, 90+ days).",
+            "has_date_filter": True,  # as_of = date_to
+            "generator": lambda df, dt: reports.to_csv(reports.receivables_ageing(as_of=dt)),
+        },
+    }
+
+
+def _generate_all_stock_ledgers_csv(date_from, date_to):
+    """Generate combined CSV for stock ledgers of all items."""
+    from core import reports
+    from core.models import Item
+    items = Item.objects.order_by("kind", "name")
+    parts = []
+    for item in items:
+        rep = reports.stock_ledger(item, date_from=date_from, date_to=date_to)
+        csv_text = reports.to_csv(rep)
+        parts.append(f"# {rep['title']}\n" + csv_text)
+    return "\n\n".join(parts)
+
+
+@login_required
+def reports_list(request):
+    """
+    List every report with a Download CSV link and optional From/To date filter.
+    Accountant has read-only access (no POST).
+    """
+    _require_reports_access(request.user)
+
+    if request.method != "GET":
+        return HttpResponse("Method not allowed", status=405)
+
+    date_from, date_to, from_raw, to_raw, error = _parse_report_dates(request)
+    if error:
+        messages.error(request, error)
+
+    report_defs = _get_report_definitions()
+    reports_info = []
+    for slug, rep in report_defs.items():
+        query_params = []
+        if from_raw and not error:
+            query_params.append(f"from={from_raw}")
+        if to_raw and not error:
+            query_params.append(f"to={to_raw}")
+        qs = f"?{'&'.join(query_params)}" if query_params else ""
+        csv_url = f"/reports/{slug}/csv/{qs}"
+        reports_info.append({
+            "name": slug,
+            "title": rep["title"],
+            "description": rep["description"],
+            "has_date_filter": rep["has_date_filter"],
+            "csv_url": csv_url,
+        })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "reports": reports_info,
+        "date_from": from_raw if not error else "",
+        "date_to": to_raw if not error else "",
+        "date_error": error,
+    })
+    return render(request, "core/reports_list.html", ctx)
+
+
+@login_required
+def report_download_csv(request, name):
+    """Download report as CSV."""
+    _require_reports_access(request.user)
+
+    if request.method != "GET":
+        return HttpResponse("Method not allowed", status=405)
+
+    # Normalize name: allow either underscores or hyphens
+    norm_name = name.strip().replace("_", "-")
+    report_defs = _get_report_definitions()
+    if norm_name not in report_defs:
+        raise Http404(f"Report '{name}' not found.")
+
+    rep = report_defs[norm_name]
+    date_from, date_to, from_raw, to_raw, error = _parse_report_dates(request)
+
+    # If there is a date error, ignore invalid dates or handle gracefully
+    if error:
+        date_from = None
+        date_to = None
+
+    csv_data = rep["generator"](date_from, date_to)
+
+    response = HttpResponse(csv_data, content_type="text/csv; charset=utf-8")
+    filename = f"{norm_name.replace('-', '_')}.csv"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
 
