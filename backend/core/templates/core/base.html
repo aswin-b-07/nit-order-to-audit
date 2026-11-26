@@ -10,9 +10,26 @@
 <body>
     <header class="navbar">
         <div class="nav-brand"><a href="{% url 'home' %}">Factory System</a></div>
+        {% if user.is_authenticated %}
+            <nav class="nav-links">
+                <a href="{% url 'home' %}">Home</a>
+                {% if can_place_order %}
+                    <a href="{% url 'order_create' %}">New Order</a>
+                {% endif %}
+                {% if can_view_orders %}
+                    <a href="{% url 'order_list' %}">{% if is_salesman %}My Orders{% else %}Orders{% endif %}</a>
+                {% endif %}
+                {% if can_view_own_orders %}
+                    <a href="{% url 'my_sales' %}">My Sales</a>
+                {% endif %}
+                {% if can_view_invoices %}
+                    <a href="{% url 'invoice_list' %}">Invoices</a>
+                {% endif %}
+            </nav>
+        {% endif %}
         <div class="nav-user">
             {% if user.is_authenticated %}
-                <span>User: <strong>{{ user.username }}</strong> ({{ user_role }})</span>
+                <span><strong>{{ user.username }}</strong> ({{ user_role }})</span>
                 <form action="{% url 'logout' %}" method="post" style="display:inline;">
                     {% csrf_token %}
                     <button type="submit" class="btn-link">Logout</button>

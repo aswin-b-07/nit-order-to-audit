@@ -1,0 +1,44 @@
+{% extends "core/base.html" %}
+
+{% block title %}My Sales - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
+        <h2>My Sales Summary</h2>
+        <a href="{% url 'order_create' %}" class="btn btn-primary touch-target">New order</a>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Customer</th>
+                <th>Orders Count</th>
+                <th>Total Sales (Rs)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in customer_sales %}
+                <tr>
+                    <td data-label="Customer"><strong>{{ row.customer.name }}</strong></td>
+                    <td data-label="Orders Count">{{ row.order_count }}</td>
+                    <td data-label="Total Sales (Rs)">Rs {{ row.total_formatted }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="3">No sales recorded yet.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+        {% if customer_sales %}
+            <tfoot>
+                <tr style="font-weight: bold; background-color: #edf2f7; border-top: 2px solid #cbd5e0;">
+                    <td data-label="Customer">Grand Total</td>
+                    <td data-label="Orders Count">{{ grand_total_orders }}</td>
+                    <td data-label="Total Sales (Rs)">Rs {{ grand_total_formatted }}</td>
+                </tr>
+            </tfoot>
+        {% endif %}
+    </table>
+</div>
+{% endblock %}

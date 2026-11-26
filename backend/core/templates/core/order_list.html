@@ -4,21 +4,26 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
         <h2>Orders</h2>
-        <div class="filter-bar">
-            <form method="get" action="{% url 'order_list' %}">
-                <label for="status">Filter by Status:</label>
-                <select name="status" id="status" class="form-control" style="display:inline-block; width: auto;" onchange="this.form.submit()">
-                    <option value="">All</option>
-                    {% for st in statuses %}
-                        <option value="{{ st }}" {% if current_status == st %}selected{% endif %}>{{ st }}</option>
-                    {% endfor %}
-                </select>
-                {% if current_status %}
-                    <a href="{% url 'order_list' %}" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Clear</a>
-                {% endif %}
-            </form>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+            {% if can_place_order %}
+                <a href="{% url 'order_create' %}" class="btn btn-primary touch-target">New order</a>
+            {% endif %}
+            {% if can_view_all_orders %}
+                <form method="get" action="{% url 'order_list' %}" style="display: inline-flex; align-items: center; gap: 0.5rem;">
+                    <label for="status">Status:</label>
+                    <select name="status" id="status" class="form-control" style="width: auto; min-height: 36px; padding: 0.25rem 0.5rem;" onchange="this.form.submit()">
+                        <option value="">All</option>
+                        {% for st in statuses %}
+                            <option value="{{ st }}" {% if current_status == st %}selected{% endif %}>{{ st }}</option>
+                        {% endfor %}
+                    </select>
+                    {% if current_status %}
+                        <a href="{% url 'order_list' %}" class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;">Clear</a>
+                    {% endif %}
+                </form>
+            {% endif %}
         </div>
     </div>
 
@@ -27,25 +32,29 @@
             <tr>
                 <th>Order #</th>
                 <th>Customer</th>
-                <th>Salesman</th>
+                <th>Date</th>
+                {% if can_view_all_orders %}<th>Salesman</th>{% endif %}
                 <th>Status</th>
                 <th>Total (Rs)</th>
-                <th>Action</th>
+                {% if can_view_all_orders %}<th>Action</th>{% endif %}
             </tr>
         </thead>
         <tbody>
             {% for item in orders_data %}
                 <tr>
-                    <td>#{{ item.order.id }}</td>
-                    <td>{{ item.order.customer.name }}</td>
-                    <td>{{ item.order.salesman.username }}</td>
-                    <td><span class="badge">{{ item.order.status }}</span></td>
-                    <td>Rs {{ item.total_formatted }}</td>
-                    <td><a href="{% url 'order_detail' item.order.id %}" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">View</a></td>
+                    <td data-label="Order #">#{{ item.order.id }}</td>
+                    <td data-label="Customer">{{ item.order.customer.name }}</td>
+                    <td data-label="Date">{{ item.order.created_at|date:"Y-m-d" }}</td>
+                    {% if can_view_all_orders %}<td data-label="Salesman">{{ item.order.salesman.username }}</td>{% endif %}
+                    <td data-label="Status"><span class="badge">{{ item.order.status }}</span></td>
+                    <td data-label="Total (Rs)">Rs {{ item.total_formatted }}</td>
+                    {% if can_view_all_orders %}
+                        <td data-label="Action"><a href="{% url 'order_detail' item.order.id %}" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">View</a></td>
+                    {% endif %}
                 </tr>
             {% empty %}
                 <tr>
-                    <td colspan="6">No orders found.</td>
+                    <td colspan="{% if can_view_all_orders %}7{% else %}5{% endif %}">No orders found.</td>
                 </tr>
             {% endfor %}
         </tbody>

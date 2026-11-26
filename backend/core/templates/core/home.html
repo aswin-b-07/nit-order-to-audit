@@ -8,7 +8,14 @@
     <p>Role: <strong>{{ user_role }}</strong></p>
 
     <div style="margin-top: 1.5rem;">
-        {% if is_admin %}
+        {% if is_salesman %}
+            <h3>Sales Portal</h3>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem; max-width: 320px; margin-top: 1rem;">
+                <a href="{% url 'order_create' %}" class="btn btn-primary btn-big">New order</a>
+                <a href="{% url 'order_list' %}" class="btn btn-secondary btn-big">My orders</a>
+                <a href="{% url 'my_sales' %}" class="btn btn-secondary btn-big">My sales</a>
+            </div>
+        {% elif is_admin %}
             <h3>Admin Portal</h3>
             <ul>
                 <li><a href="{% url 'order_list' %}">Orders</a></li>

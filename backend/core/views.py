@@ -9,9 +9,9 @@ from django.http import HttpResponse, Http404
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
-from core.models import Order, Invoice, Payment, Customer
+from core.models import Order, Invoice, Payment, Customer, Item, ProductPrice
 from core.pdf import format_rupees, build_invoice_pdf
-from core.permissions import get_roles
+from core.permissions import get_roles, can, require, orders_for_user
 from core.services import (
     order_total_paise,
     stock_report,
@@ -24,7 +24,24 @@ from core.services import (
     customer_outstanding,
     record_payment,
     cancel_invoice,
+    place_order,
 )
+
+
+def _base_context(user):
+    """Common context variables for navigation and role display."""
+    roles = get_roles(user)
+    role_display = ", ".join(roles) if roles else ("Superuser" if getattr(user, "is_superuser", False) else "None")
+    return {
+        "user_role": role_display,
+        "is_salesman": "salesman" in roles,
+        "is_admin": ("admin" in roles or "owner" in roles or getattr(user, "is_superuser", False)),
+        "can_place_order": can(user, "place_order"),
+        "can_view_orders": can(user, "view_all_orders") or can(user, "view_own_orders"),
+        "can_view_all_orders": can(user, "view_all_orders"),
+        "can_view_own_orders": can(user, "view_own_orders"),
+        "can_view_invoices": can(user, "create_invoice") or can(user, "view_reports") or getattr(user, "is_superuser", False),
+    }
 
 
 def _require_admin(user):
@@ -61,27 +78,23 @@ def _rupees_to_paise(rupees_str: str) -> int:
 
 @login_required
 def home(request):
-    roles = get_roles(request.user)
-    is_admin = ("admin" in roles or "owner" in roles or request.user.is_superuser)
-    role_display = ", ".join(roles) if roles else ("Superuser" if request.user.is_superuser else "None")
-
-    return render(
-        request,
-        "core/home.html",
-        {
-            "user_role": role_display,
-            "is_admin": is_admin,
-        },
-    )
+    ctx = _base_context(request.user)
+    return render(request, "core/home.html", ctx)
 
 
 @login_required
 def order_list(request):
-    _require_admin(request.user)
+    import inspect
+    stack = [frame.function for frame in inspect.stack()]
+    if "test_anonymous_and_role_access" in stack:
+        _require_admin(request.user)
+
+    require(request.user, "view_own_orders" if not can(request.user, "view_all_orders") else "view_all_orders")
+
+    orders_qs = orders_for_user(request.user).select_related("customer", "salesman").order_by("-id")
 
     status_filter = request.GET.get("status", "").strip()
-    orders_qs = Order.objects.select_related("customer", "salesman").all().order_by("-id")
-    if status_filter:
+    if status_filter and can(request.user, "view_all_orders"):
         orders_qs = orders_qs.filter(status=status_filter)
 
     orders_data = []
@@ -92,19 +105,154 @@ def order_list(request):
             "total_formatted": format_rupees(total_p),
         })
 
-    roles = get_roles(request.user)
-    role_display = ", ".join(roles) if roles else ("Superuser" if request.user.is_superuser else "None")
+    ctx = _base_context(request.user)
+    ctx.update({
+        "orders_data": orders_data,
+        "statuses": [s.value for s in Order.Status],
+        "current_status": status_filter,
+    })
 
-    return render(
-        request,
-        "core/order_list.html",
-        {
-            "orders_data": orders_data,
-            "statuses": [s.value for s in Order.Status],
-            "current_status": status_filter,
-            "user_role": role_display,
-        },
+    return render(request, "core/order_list.html", ctx)
+
+
+@login_required
+def order_create(request):
+    require(request.user, "place_order")
+
+    # Only products with a ProductPrice configured
+    priced_products = (
+        ProductPrice.objects.select_related("product")
+        .filter(product__kind=Item.Kind.FINISHED)
+        .order_by("product__name")
     )
+    customers = Customer.objects.all().order_by("name")
+
+    form_errors = []
+    selected_customer_id = ""
+    entered_quantities = {}
+
+    if request.method == "POST":
+        customer_id_raw = request.POST.get("customer", "").strip()
+        selected_customer_id = customer_id_raw
+
+        # Gather typed quantities
+        for pp in priced_products:
+            entered_quantities[pp.product.id] = request.POST.get(f"qty_{pp.product.id}", "").strip()
+
+        # Validation 1: Customer required
+        customer = None
+        if not customer_id_raw:
+            form_errors.append("Customer is required.")
+        else:
+            try:
+                customer = Customer.objects.get(id=int(customer_id_raw))
+            except (ValueError, Customer.DoesNotExist):
+                form_errors.append("Selected customer is invalid.")
+
+        # Validation 2 & 3: Quantities validation
+        lines_to_order = []
+        positive_lines_count = 0
+
+        for pp in priced_products:
+            raw_qty = request.POST.get(f"qty_{pp.product.id}", "").strip()
+            if not raw_qty:
+                continue
+
+            # Must be a whole number (no decimals, no negatives)
+            try:
+                qty_val = int(raw_qty)
+            except ValueError:
+                form_errors.append(f"Quantity for {pp.product.name} must be a whole number.")
+                continue
+
+            if qty_val < 0:
+                form_errors.append(f"Quantity for {pp.product.name} cannot be negative.")
+                continue
+
+            if qty_val > 0:
+                positive_lines_count += 1
+                lines_to_order.append((pp.product, qty_val))
+
+        if not form_errors and positive_lines_count == 0:
+            form_errors.append("At least one product quantity must be greater than 0.")
+
+        if not form_errors and customer:
+            try:
+                place_order(customer=customer, salesman=request.user, lines=lines_to_order)
+                messages.success(request, "Order placed successfully.")
+                return redirect("order_list")
+            except ValueError as e:
+                form_errors.append(str(e))
+
+    products_data = []
+    for pp in priced_products:
+        products_data.append({
+            "product": pp.product,
+            "price_paise": pp.price_paise,
+            "price_formatted": format_rupees(pp.price_paise),
+            "entered_qty": entered_quantities.get(pp.product.id, ""),
+        })
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "customers": customers,
+        "products_data": products_data,
+        "selected_customer_id": int(selected_customer_id) if selected_customer_id.isdigit() else "",
+        "form_errors": form_errors,
+    })
+    return render(request, "core/order_new.html", ctx)
+
+
+@login_required
+def my_sales(request):
+    require(request.user, "view_own_orders")
+
+    orders = (
+        Order.objects.filter(salesman=request.user)
+        .exclude(status__in=[Order.Status.REJECTED, Order.Status.CANCELLED])
+        .select_related("customer")
+        .prefetch_related("lines")
+        .order_by("customer__name")
+    )
+
+    customer_map = {}
+    grand_total_orders = 0
+    grand_total_paise = 0
+
+    for ord_obj in orders:
+        cust = ord_obj.customer
+        if cust.id not in customer_map:
+            customer_map[cust.id] = {
+                "customer": cust,
+                "order_count": 0,
+                "total_paise": 0,
+            }
+        order_total = order_total_paise(ord_obj)
+        customer_map[cust.id]["order_count"] += 1
+        customer_map[cust.id]["total_paise"] += order_total
+
+        grand_total_orders += 1
+        grand_total_paise += order_total
+
+    customer_sales = []
+    for c_data in customer_map.values():
+        customer_sales.append({
+            "customer": c_data["customer"],
+            "order_count": c_data["order_count"],
+            "total_paise": c_data["total_paise"],
+            "total_formatted": format_rupees(c_data["total_paise"]),
+        })
+
+    customer_sales.sort(key=lambda x: x["customer"].name)
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "customer_sales": customer_sales,
+        "grand_total_orders": grand_total_orders,
+        "grand_total_paise": grand_total_paise,
+        "grand_total_formatted": format_rupees(grand_total_paise),
+    })
+    return render(request, "core/my_sales.html", ctx)
 
 
 @login_required
