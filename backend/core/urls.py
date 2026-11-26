@@ -12,7 +12,7 @@ urlpatterns = [
     path('orders/<int:order_id>/<slug:action_name>/', views.order_action, name='order_action'),
     path('my-sales/', views.my_sales, name='my_sales'),
     path('invoices/', views.invoice_list, name='invoice_list'),
+    path('invoices/<int:invoice_id>/pdf/', views.download_invoice_pdf_view, name='download_invoice_pdf'),
     path('invoices/<int:invoice_id>/', views.invoice_detail, name='invoice_detail'),
     path('invoices/<int:invoice_id>/<slug:action_name>/', views.invoice_action, name='invoice_action'),
-    path('invoices/<int:invoice_id>/pdf/', views.download_invoice_pdf_view, name='download_invoice_pdf'),
 ]

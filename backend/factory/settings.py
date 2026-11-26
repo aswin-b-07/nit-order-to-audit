@@ -141,4 +141,7 @@ FACTORY_ADDRESS = "Coimbatore, Tamil Nadu"
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/"
 
+import sys
 
+if "test" in sys.argv:
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]

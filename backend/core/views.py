@@ -528,7 +528,7 @@ def order_detail(request, order_id):
             if isinstance(e, PermissionDenied):
                 raise
             messages.error(request, str(e))
-            return redirect("order_detail", order_id=order.id)
+            # Fall through to re-render the detail page with the error message
 
     # Prepare data for rendering
     lines_data = []
@@ -637,7 +637,7 @@ def invoice_detail(request, invoice_id):
             if isinstance(e, PermissionDenied):
                 raise
             messages.error(request, str(e))
-            return redirect("invoice_detail", invoice_id=invoice.id)
+            # Fall through to re-render page
 
     # Prepare view context
     lines_data = []
