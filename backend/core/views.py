@@ -22,6 +22,7 @@ from core.models import (
     BOMLine,
     ProductionRun,
     ProductionRunLine,
+    Expense,
 )
 from core.pdf import format_rupees, build_invoice_pdf
 from core.permissions import get_roles, can, require, orders_for_user
@@ -43,6 +44,8 @@ from core.services import (
     variance_bp,
     is_flagged,
     to_base,
+    record_expense,
+    run_costing,
 )
 
 
@@ -1064,9 +1067,51 @@ def production_detail(request, run_id):
     _require_production(request.user)
 
     run = get_object_or_404(ProductionRun.objects.select_related("bom__product", "created_by"), id=run_id)
+
+    expense_form_errors = []
+    selected_expense_kind = Expense.Kind.LABOUR
+    entered_expense_amount = ""
+    entered_expense_note = ""
+
+    if request.method == "POST":
+        selected_expense_kind = request.POST.get("kind", "").strip()
+        entered_expense_amount = request.POST.get("amount", "").strip()
+        entered_expense_note = request.POST.get("note", "").strip()
+
+        # Validate expense kind
+        valid_kinds = {k.value for k in Expense.Kind}
+        if selected_expense_kind not in valid_kinds:
+            expense_form_errors.append(f"Expense type must be one of: {', '.join(sorted(valid_kinds))}.")
+
+        # Validate amount
+        if not entered_expense_amount:
+            expense_form_errors.append("Amount is required.")
+        else:
+            try:
+                paise = _rupees_to_paise(entered_expense_amount)
+            except ValueError as e:
+                expense_form_errors.append(str(e))
+                paise = None
+
+        if not expense_form_errors and paise is not None:
+            try:
+                record_expense(
+                    run=run,
+                    kind=selected_expense_kind,
+                    amount_paise=paise,
+                    note=entered_expense_note,
+                    user=request.user,
+                )
+                messages.success(request, "Expense recorded successfully.")
+                return redirect("production_detail", run_id=run.id)
+            except ValueError as e:
+                expense_form_errors.append(str(e))
+
     lines = run.lines.select_related("item").all().order_by("id")
 
     lines_data = []
+    raw_material_cost_paise = 0
+    packaging_cost_paise = 0
     for line in lines:
         lines_data.append({
             "item": line.item,
@@ -1075,6 +1120,47 @@ def production_detail(request, run_id):
             "variance_pct": _format_variance_bp(line.variance_bp),
             "flagged": line.flagged,
         })
+        if line.item.kind == Item.Kind.RAW:
+            raw_material_cost_paise += line.cost_paise
+        elif line.item.kind == Item.Kind.PACKAGING:
+            packaging_cost_paise += line.cost_paise
+
+    # Expenses list
+    expenses = run.expenses.all().order_by("id")
+    expenses_data = []
+    for exp in expenses:
+        expenses_data.append({
+            "expense": exp,
+            "kind_display": exp.get_kind_display(),
+            "amount_formatted": format_rupees(exp.amount_paise),
+        })
+
+    # Costing summary
+    costing = run_costing(run)
+    labour_paise = costing["overhead_by_kind"].get(Expense.Kind.LABOUR, 0)
+    gas_power_paise = costing["overhead_by_kind"].get(Expense.Kind.GAS_POWER, 0)
+    other_overhead_paise = costing["overhead_by_kind"].get(Expense.Kind.OTHER, 0)
+
+    # Cost per packet (rupees, 2 decimals)
+    if costing["cost_per_packet_paise"] is not None:
+        cpp_dec = Decimal(costing["cost_per_packet_paise"]) / Decimal(100)
+        cost_per_packet_display = f"{cpp_dec:.2f}"
+    else:
+        cost_per_packet_display = "-"
+
+    # Selling price per packet
+    if costing["selling_price_paise"] is not None:
+        sp_dec = Decimal(costing["selling_price_paise"]) / Decimal(100)
+        selling_price_display = f"{sp_dec:.2f}"
+    else:
+        selling_price_display = "-"
+
+    # Margin as percent from basis points (3772 bp = 37.72%)
+    if costing["margin_bp"] is not None:
+        margin_pct_dec = Decimal(costing["margin_bp"]) / Decimal(100)
+        margin_pct_display = f"{margin_pct_dec:.2f}%"
+    else:
+        margin_pct_display = "-"
 
     ctx = _base_context(request.user)
     ctx.update({
@@ -1082,6 +1168,23 @@ def production_detail(request, run_id):
         "lines_data": lines_data,
         "yield_variance_pct": _format_variance_bp(run.yield_variance_bp),
         "material_cost_formatted": format_rupees(run.material_cost_paise),
+        # Expenses & Costing
+        "expense_kinds": Expense.Kind.choices,
+        "expense_form_errors": expense_form_errors,
+        "selected_expense_kind": selected_expense_kind,
+        "entered_expense_amount": entered_expense_amount,
+        "entered_expense_note": entered_expense_note,
+        "expenses_data": expenses_data,
+        "costing": costing,
+        "raw_material_cost_formatted": format_rupees(raw_material_cost_paise),
+        "packaging_cost_formatted": format_rupees(packaging_cost_paise),
+        "labour_formatted": format_rupees(labour_paise),
+        "gas_power_formatted": format_rupees(gas_power_paise),
+        "other_overhead_formatted": format_rupees(other_overhead_paise),
+        "total_cost_formatted": format_rupees(costing["total_cost_paise"]),
+        "cost_per_packet_display": cost_per_packet_display,
+        "selling_price_display": selling_price_display,
+        "margin_pct_display": margin_pct_display,
     })
     return render(request, "core/production_detail.html", ctx)
 

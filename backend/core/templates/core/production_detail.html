@@ -72,5 +72,122 @@
             {% endfor %}
         </tbody>
     </table>
+
+    <div style="margin-top: 2rem;">
+        <h3>Cost Summary</h3>
+        <p style="color: #4a5568; font-style: italic; margin-bottom: 1rem;">
+            Weighted-average costing; overheads divided by good packets.
+        </p>
+
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; margin-bottom: 2rem;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+                <div><strong>Raw Material Cost:</strong> Rs {{ raw_material_cost_formatted }}</div>
+                <div><strong>Packaging Cost:</strong> Rs {{ packaging_cost_formatted }}</div>
+                <div><strong>Labour:</strong> Rs {{ labour_formatted }}</div>
+                <div><strong>Gas/Power:</strong> Rs {{ gas_power_formatted }}</div>
+                {% if other_overhead_formatted != "0.00" %}
+                    <div><strong>Other Overhead:</strong> Rs {{ other_overhead_formatted }}</div>
+                {% endif %}
+                <div><strong>Total Cost:</strong> Rs {{ total_cost_formatted }}</div>
+                <div><strong>Good Packets:</strong> {{ costing.good_packets }}</div>
+                <div style="font-size: 1.1rem; color: #1a202c;">
+                    <strong>Cost per packet:</strong> Rs {{ cost_per_packet_display }}
+                </div>
+                <div><strong>Selling Price per packet:</strong> Rs {{ selling_price_display }}</div>
+                <div style="font-size: 1.1rem; color: #2b6cb0;">
+                    <strong>Margin:</strong> {{ margin_pct_display }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 2rem;">
+        <h3>Expenses</h3>
+
+        <table style="margin-bottom: 1.5rem;">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Amount (Rs)</th>
+                    <th>Note</th>
+                    <th>Recorded By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for exp in expenses_data %}
+                    <tr>
+                        <td data-label="ID">#{{ exp.expense.id }}</td>
+                        <td data-label="Date">{{ exp.expense.created_at|date:"Y-m-d H:i" }}</td>
+                        <td data-label="Type">{{ exp.kind_display }}</td>
+                        <td data-label="Amount (Rs)">Rs {{ exp.amount_formatted }}</td>
+                        <td data-label="Note">{{ exp.expense.note|default:"-" }}</td>
+                        <td data-label="Recorded By">{{ exp.expense.created_by.username|default:"-" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="6">No expenses recorded for this run.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="card" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; max-width: 500px; margin: 0;">
+            <h4 style="margin-top: 0; margin-bottom: 1rem;">Add Expense</h4>
+
+            {% if expense_form_errors %}
+                <div class="alert alert-error" style="margin-bottom: 1rem;">
+                    <ul style="margin: 0; padding-left: 1.25rem;">
+                        {% for err in expense_form_errors %}
+                            <li>{{ err }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            <form method="post" action="{% url 'production_detail' run.id %}">
+                {% csrf_token %}
+
+                <div class="form-group">
+                    <label for="kind">Expense Type *</label>
+                    <select name="kind" id="kind" class="form-control" style="max-width: 100%; min-height: 40px; font-size: 1rem;" required>
+                        {% for val, label in expense_kinds %}
+                            <option value="{{ val }}" {% if selected_expense_kind == val %}selected{% endif %}>
+                                {{ label }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="amount">Amount in Rupees (Rs) *</label>
+                    <input type="text"
+                           name="amount"
+                           id="amount"
+                           class="form-control touch-target"
+                           style="max-width: 100%; font-size: 1rem;"
+                           value="{{ entered_expense_amount|default:'' }}"
+                           placeholder="e.g. 1200 or 1200.50"
+                           required>
+                </div>
+
+                <div class="form-group">
+                    <label for="note">Note (optional)</label>
+                    <input type="text"
+                           name="note"
+                           id="note"
+                           class="form-control"
+                           style="max-width: 100%;"
+                           value="{{ entered_expense_note|default:'' }}"
+                           placeholder="e.g. 2 workers 1 shift">
+                </div>
+
+                <button type="submit" class="btn btn-primary touch-target" style="width: 100%; margin-top: 0.5rem;">
+                    Add Expense
+                </button>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}
