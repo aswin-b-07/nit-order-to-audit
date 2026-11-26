@@ -170,8 +170,8 @@ class StockFoundationTests(TestCase):
 class PurchaseAndValuationTests(TestCase):
     def setUp(self):
         call_command("seed_benchmark")
-        self.supplier = Supplier.objects.create(
-            name="Sri Murugan Traders", gstin="33ABCDE1234F1Z5"
+        self.supplier, _ = Supplier.objects.get_or_create(
+            name="Sri Murugan Traders", defaults={"gstin": "33ABCDE1234F1Z5"}
         )
         self.flour = Item.objects.get(name="Flour")
         self.oil = Item.objects.get(name="Cooking oil")

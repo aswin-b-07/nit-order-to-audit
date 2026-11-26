@@ -134,20 +134,7 @@ class Command(BaseCommand):
                         f"BOMLine for '{line_item_name}' already exists. Skipping."
                     )
 
-            # Seed Supplier: Sri Murugan Traders (unless in PurchaseAndValuationTests which creates its own)
-            import inspect
-            stack_classes = [
-                f.frame.f_locals.get("self").__class__.__name__
-                for f in inspect.stack()
-                if "self" in f.frame.f_locals
-            ]
-            if "PurchaseAndValuationTests" not in stack_classes:
-                Supplier.objects.get_or_create(
-                    name="Sri Murugan Traders",
-                    defaults={
-                        "gstin": "33SMTRAD0000A1Z5",
-                    },
-                )
+            Supplier.objects.get_or_create(name="Sri Murugan Traders", defaults={"gstin": "33SMTRAD0000A1Z5"})
 
             # Seed Customers
             # Note: the GSTINs are dummy test values
