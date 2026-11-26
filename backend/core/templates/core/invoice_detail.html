@@ -8,7 +8,9 @@
         <h2>Invoice {{ invoice.number }}</h2>
         <div>
             <span class="badge" style="font-size: 1.1rem; font-weight: bold; margin-right: 1rem;">{{ invoice.status }}</span>
-            <a href="{% url 'download_invoice_pdf' invoice.id %}" class="btn btn-secondary">Download PDF</a>
+            {% if can_download_invoice_pdf %}
+                <a href="{% url 'download_invoice_pdf' invoice.id %}" class="btn btn-secondary">Download PDF</a>
+            {% endif %}
         </div>
     </div>
 
@@ -107,51 +109,55 @@
         </table>
     </div>
 
-    {% if invoice.status == "ISSUED" %}
+    {% if invoice.status == "ISSUED" and can_record_payment or invoice.status == "ISSUED" and can_cancel_invoice %}
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
-            <div class="card" style="margin-bottom: 0;">
-                <h4>Record Payment</h4>
-                <form method="post" action="{% url 'invoice_detail' invoice.id %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="record_payment">
-                    <div class="form-group">
-                        <label for="id_amount">Amount (Rupees):</label>
-                        <input type="text" name="amount" id="id_amount" class="form-control" placeholder="e.g. 5000.00" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="id_date">Date:</label>
-                        <input type="date" name="date" id="id_date" class="form-control" value="{{ today|date:'Y-m-d' }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="id_mode">Mode:</label>
-                        <select name="mode" id="id_mode" class="form-control" required>
-                            <option value="BANK">Bank Transfer</option>
-                            <option value="CASH">Cash</option>
-                            <option value="CHEQUE">Cheque</option>
-                            <option value="UPI">UPI</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="id_reference">Reference:</label>
-                        <input type="text" name="reference" id="id_reference" class="form-control" placeholder="Cheque / UTR / Note">
-                    </div>
-                    <button type="submit" class="btn btn-primary">Record Payment</button>
-                </form>
-            </div>
+            {% if can_record_payment %}
+                <div class="card" style="margin-bottom: 0;">
+                    <h4>Record Payment</h4>
+                    <form method="post" action="{% url 'invoice_action' invoice.id 'record_payment' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="record_payment">
+                        <div class="form-group">
+                            <label for="id_amount">Amount (Rupees):</label>
+                            <input type="text" name="amount" id="id_amount" class="form-control" placeholder="e.g. 5000.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="id_date">Date:</label>
+                            <input type="date" name="date" id="id_date" class="form-control" value="{{ today|date:'Y-m-d' }}" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="id_mode">Mode:</label>
+                            <select name="mode" id="id_mode" class="form-control" required>
+                                <option value="BANK">Bank Transfer</option>
+                                <option value="CASH">Cash</option>
+                                <option value="CHEQUE">Cheque</option>
+                                <option value="UPI">UPI</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="id_reference">Reference:</label>
+                            <input type="text" name="reference" id="id_reference" class="form-control" placeholder="Cheque / UTR / Note">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Record Payment</button>
+                    </form>
+                </div>
+            {% endif %}
 
-            <div class="card" style="margin-bottom: 0;">
-                <h4 class="text-danger">Cancel Invoice</h4>
-                <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
-                <form method="post" action="{% url 'invoice_detail' invoice.id %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="cancel_invoice">
-                    <div class="form-group">
-                        <label for="id_cancel_reason">Reason for cancellation:</label>
-                        <textarea name="reason" id="id_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-danger">Cancel Invoice</button>
-                </form>
-            </div>
+            {% if can_cancel_invoice %}
+                <div class="card" style="margin-bottom: 0;">
+                    <h4 class="text-danger">Cancel Invoice</h4>
+                    <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
+                    <form method="post" action="{% url 'invoice_action' invoice.id 'cancel_invoice' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="cancel_invoice">
+                        <div class="form-group">
+                            <label for="id_cancel_reason">Reason for cancellation:</label>
+                            <textarea name="reason" id="id_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-danger">Cancel Invoice</button>
+                    </form>
+                </div>
+            {% endif %}
         </div>
     {% endif %}
 </div>

@@ -17,15 +17,17 @@
     {% endif %}
 
     <h3>Order Lines</h3>
-    {% if order.status == "SUBMITTED" %}
-        <form method="post" action="{% url 'order_detail' order.id %}">
+    {% if order.status == "SUBMITTED" and can_edit_order %}
+        <form method="post" action="{% url 'order_action' order.id 'update_lines' %}">
             {% csrf_token %}
             <input type="hidden" name="action" value="update_lines">
             <table>
                 <thead>
                     <tr>
                         <th>Product</th>
-                        <th>Quantity</th>
+                        <th>Ordered Quantity</th>
+                        <th>Available Stock</th>
+                        <th>Stock Status</th>
                         <th>Unit Price (Rs)</th>
                         <th>Line Total (Rs)</th>
                     </tr>
@@ -36,6 +38,14 @@
                             <td>{{ l.line.product.name }}</td>
                             <td>
                                 <input type="number" name="qty_{{ l.line.id }}" value="{{ l.line.quantity }}" min="1" class="form-control" style="width: 100px;" required>
+                            </td>
+                            <td>{{ l.available }} packets</td>
+                            <td>
+                                {% if l.shortage > 0 %}
+                                    <span class="text-danger" style="font-weight: bold;">Shortage of {{ l.shortage }} packets</span>
+                                {% else %}
+                                    <span style="color: green; font-weight: bold;">Stock OK</span>
+                                {% endif %}
                             </td>
                             <td>
                                 <input type="text" name="price_{{ l.line.id }}" value="{{ l.unit_price_rupees }}" class="form-control" style="width: 120px;">
@@ -55,7 +65,9 @@
             <thead>
                 <tr>
                     <th>Product</th>
-                    <th>Quantity</th>
+                    <th>Ordered Quantity</th>
+                    <th>Available Stock</th>
+                    <th>Stock Status</th>
                     <th>Unit Price (Rs)</th>
                     <th>Line Total (Rs)</th>
                 </tr>
@@ -64,7 +76,15 @@
                 {% for l in lines_data %}
                     <tr>
                         <td>{{ l.line.product.name }}</td>
-                        <td>{{ l.line.quantity }}</td>
+                        <td>{{ l.line.quantity }} packets</td>
+                        <td>{{ l.available }} packets</td>
+                        <td>
+                            {% if l.shortage > 0 %}
+                                <span class="text-danger" style="font-weight: bold;">Shortage of {{ l.shortage }} packets</span>
+                            {% else %}
+                                <span style="color: green; font-weight: bold;">Stock OK</span>
+                            {% endif %}
+                        </td>
                         <td>Rs {{ l.unit_price_formatted }}</td>
                         <td>Rs {{ l.line_total_formatted }}</td>
                     </tr>
@@ -84,7 +104,7 @@
                     <th>Product</th>
                     <th>Ordered</th>
                     <th>Available</th>
-                    <th>Shortage</th>
+                    <th>Shortage / Status</th>
                 </tr>
             </thead>
             <tbody>
@@ -93,8 +113,12 @@
                         <td>{{ rep.product.name }}</td>
                         <td>{{ rep.ordered }}</td>
                         <td>{{ rep.available }}</td>
-                        <td {% if rep.shortage > 0 %}class="text-danger"{% endif %}>
-                            {{ rep.shortage }}
+                        <td {% if rep.shortage > 0 %}class="text-danger" style="font-weight: bold;"{% else %}style="color: green; font-weight: bold;"{% endif %}>
+                            {% if rep.shortage > 0 %}
+                                Shortage of {{ rep.shortage }} packets
+                            {% else %}
+                                Stock OK
+                            {% endif %}
                         </td>
                     </tr>
                 {% endfor %}
@@ -104,34 +128,103 @@
 
     <div class="actions-row" style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
         {% if order.status == "SUBMITTED" %}
-            <form method="post" action="{% url 'order_detail' order.id %}" class="form-inline">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="approve">
-                <button type="submit" class="btn btn-primary">Approve Order</button>
-            </form>
+            {% if can_approve_order %}
+                <form method="post" action="{% url 'order_action' order.id 'approve' %}" class="form-inline" style="display:inline-block; margin-right: 1rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="approve">
+                    <button type="submit" class="btn btn-primary">Approve</button>
+                </form>
+            {% endif %}
 
-            <form method="post" action="{% url 'order_detail' order.id %}" style="display: flex; gap: 0.5rem; align-items: center;">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="reject">
-                <input type="text" name="reason" placeholder="Rejection reason" class="form-control" required>
-                <button type="submit" class="btn btn-danger">Reject Order</button>
-            </form>
+            {% if can_reject_order %}
+                <form method="post" action="{% url 'order_action' order.id 'reject' %}" style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="reject">
+                    <input type="text" name="reason" placeholder="Rejection reason" class="form-control" required>
+                    <button type="submit" class="btn btn-danger">Reject</button>
+                </form>
+            {% endif %}
         {% elif order.status == "APPROVED" %}
-            <form method="post" action="{% url 'order_detail' order.id %}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="create_invoice">
-                <button type="submit" class="btn btn-primary">Create Invoice</button>
-            </form>
-        {% elif order.status == "INVOICED" %}
-            <form method="post" action="{% url 'order_detail' order.id %}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="record_dispatch">
-                <button type="submit" class="btn btn-primary">Record Dispatch</button>
-            </form>
-        {% elif order.status == "DISPATCHED" %}
-            <p style="color: green; font-weight: bold;">Order dispatched.</p>
+            {% if can_create_invoice %}
+                <form method="post" action="{% url 'order_action' order.id 'create_invoice' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create_invoice">
+                    <button type="submit" class="btn btn-primary">Create invoice</button>
+                </form>
+            {% endif %}
+        {% elif order.status == "INVOICED" or order.status == "DISPATCHED" %}
+            {% if order.status == "INVOICED" and can_record_dispatch %}
+                <form method="post" action="{% url 'order_action' order.id 'record_dispatch' %}" style="margin-bottom: 1.5rem;">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="record_dispatch">
+                    <button type="submit" class="btn btn-primary">Record dispatch</button>
+                </form>
+            {% elif order.status == "DISPATCHED" %}
+                <p style="color: green; font-weight: bold;">Order dispatched.</p>
+            {% endif %}
+
             {% if invoice %}
-                <a href="{% url 'invoice_detail' invoice.id %}" class="btn btn-secondary">View Invoice {{ invoice.number }}</a>
+                <div style="background: #f7fafc; padding: 1.5rem; border-radius: 6px; border: 1px solid #e2e8f0; margin-top: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="margin: 0;">Invoice {{ invoice.number }}</h3>
+                        <a href="{% url 'invoice_detail' invoice.id %}" class="btn btn-secondary">View Invoice Detail</a>
+                    </div>
+                    <p><strong>Status:</strong> <span class="badge">{{ invoice.status }}</span></p>
+                    <p><strong>Invoice Total:</strong> Rs {{ invoice.total_paise|default:0|floatformat:2 }} ({{ order_total_formatted }})</p>
+                    <h4 style="color: #2b6cb0;">Outstanding: Rs {{ invoice_outstanding_formatted }}</h4>
+
+                    {% if invoice.status == "ISSUED" %}
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem; border-top: 1px solid #cbd5e0; padding-top: 1.5rem;">
+                            {% if can_record_payment %}
+                                <div class="card" style="margin-bottom: 0; background: #fff;">
+                                    <h4>Record Payment</h4>
+                                    <form method="post" action="{% url 'order_action' order.id 'record_payment' %}">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="record_payment">
+                                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                                            <label for="id_ord_amount">Amount (Rupees):</label>
+                                            <input type="text" name="amount" id="id_ord_amount" class="form-control" placeholder="e.g. 4000.00" required>
+                                        </div>
+                                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                                            <label for="id_ord_date">Date:</label>
+                                            <input type="date" name="date" id="id_ord_date" class="form-control" value="{{ today|date:'Y-m-d' }}" required>
+                                        </div>
+                                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                                            <label for="id_ord_mode">Mode:</label>
+                                            <select name="mode" id="id_ord_mode" class="form-control" required>
+                                                <option value="BANK">Bank Transfer</option>
+                                                <option value="CASH">Cash</option>
+                                                <option value="CHEQUE">Cheque</option>
+                                                <option value="UPI">UPI</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                                            <label for="id_ord_reference">Reference:</label>
+                                            <input type="text" name="reference" id="id_ord_reference" class="form-control" placeholder="Cheque / UTR / Note">
+                                        </div>
+                                        <button type="submit" class="btn btn-primary">Record Payment</button>
+                                    </form>
+                                </div>
+                            {% endif %}
+
+                            {% if can_cancel_invoice %}
+                                <div class="card" style="margin-bottom: 0; background: #fff;">
+                                    <h4 class="text-danger">Cancel Invoice</h4>
+                                    <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
+                                    <form method="post" action="{% url 'order_action' order.id 'cancel_invoice' %}">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="cancel_invoice">
+                                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                                            <label for="id_ord_cancel_reason">Reason for cancellation:</label>
+                                            <textarea name="reason" id="id_ord_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
+                                        </div>
+                                        <button type="submit" class="btn btn-danger">Cancel Invoice</button>
+                                    </form>
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
             {% endif %}
         {% endif %}
     </div>
