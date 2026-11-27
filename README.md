@@ -7,7 +7,7 @@
 A working prototype of an order-to-audit system for a small snack manufacturer: sales orders, GST invoicing, BOM-based production with variance flagging, ledger-based inventory, costing, and audit reports. Individual submission by Aswin for the NIT Trichy CDI Winter Internship 2026.
 
 - **Demo video:** (link will be added after upload)
-- **Live demo:** (link will be added if hosting works; otherwise use the run command in section 2)
+- **Live demo:** https://nit-order-to-audit-2e69.onrender.com (free hosting: the first load after idle takes up to a minute, and data resets when the service restarts. Test logins are in section 3.)
 - **Design note:** [docs/DESIGN_NOTE.md](docs/DESIGN_NOTE.md)
 - **Sample invoice PDF:** [docs/sample_invoice_retailer_a.pdf](docs/sample_invoice_retailer_a.pdf)
 
