@@ -1,19 +1,21 @@
 # Order-to-Audit System for a Small Food Manufacturer
 
-> Order-to-Audit System for a Small Food Manufacturer (NIT Trichy CDI Winter Internship 2026), individual submission by Suriya.
-
 ---
 
 ## 1. Project Overview
 
-This application is a production-grade, audit-ready Enterprise Resource Planning (ERP) and order-to-cash workflow system tailored for a small-scale food processing factory (manufacturing traditional packaged snacks such as Murukku). The system bridges raw material procurement, Bill of Materials (BOM) recipe management, batch production tracking with automated variance flagging, sales order workflows, GST-compliant tax invoicing, dispatch-driven inventory movements, payment tracking, and audit logging.
+A working prototype of an order-to-audit system for a small snack manufacturer: sales orders, GST invoicing, BOM-based production with variance flagging, ledger-based inventory, costing, and audit reports. Individual submission by Aswin for the NIT Trichy CDI Winter Internship 2026.
+
+- **Demo video:** (link will be added after upload)
+- **Live demo:** (link will be added if hosting works; otherwise use the run command in section 2)
+- **Design note:** [docs/DESIGN_NOTE.md](docs/DESIGN_NOTE.md)
+- **Sample invoice PDF:** [docs/sample_invoice_retailer_a.pdf](docs/sample_invoice_retailer_a.pdf)
 
 ---
 
 ## 2. Setup and Run Guide
 
-### Requirements File Location
-The project dependencies are located in `backend/requirements.txt`. For reference, the dependency specification is:
+Requires Python 3.12. All dependencies are pinned in `backend/requirements.txt`:
 
 ```text
 asgiref==3.13.0
@@ -76,14 +78,22 @@ python manage.py run_benchmark
 python manage.py runserver
 ```
 
+Then open **http://127.0.0.1:8000/login/** and sign in with one of the test accounts in section 3.
+
+> **Windows note:** if PowerShell says "running scripts is disabled", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, then activate the environment again.
+>
+> **Benchmark note:** skip step 5 (`run_benchmark`) if you want to follow the manual walkthrough in section 7. That command performs the benchmark transactions in advance, so use it on a fresh database only to see the finished result.
+>
+> **Resetting the database:** stop the server, delete `backend/db.sqlite3`, then repeat steps 3 and 4.
+
 ### Single Run Commands
 
-**Windows PowerShell (Single Command):**
+**Windows PowerShell (single command):**
 ```powershell
 python -m venv venv; .\venv\Scripts\Activate.ps1; pip install -r backend\requirements.txt; cd backend; python manage.py migrate; python manage.py seed_benchmark; python manage.py seed_users; python manage.py runserver
 ```
 
-**Linux / macOS (Single Command):**
+**Linux / macOS (single command):**
 ```bash
 python3 -m venv venv && source venv/bin/activate && pip install -r backend/requirements.txt && cd backend && python manage.py migrate && python manage.py seed_benchmark && python manage.py seed_users && python manage.py runserver
 ```
@@ -92,16 +102,16 @@ python3 -m venv venv && source venv/bin/activate && pip install -r backend/requi
 
 ## 3. Test Logins and Role Permissions
 
-All seeded test accounts share the password: **`Test@1234`**
+All seeded test accounts (dummy data only) share the password: **`Test@1234`**
 
 | Username | Role | Permitted Actions & Responsibilities |
 |---|---|---|
 | `salesman_a` | **Salesman** | Place new customer sales orders (`/orders/new/`), view own submitted orders (`/orders/`), view customer directory, view product price list, view own sales summary (`/my-sales/`). Cannot approve orders, dispatch goods, manage invoices, record production, or view reports. |
 | `salesman_b` | **Salesman** | Same capabilities as `salesman_a`. Enforces strict row-level isolation: cannot see orders submitted by `salesman_a`. |
 | `admin1` | **Admin** | Order-to-cash administration: view all orders across all sales reps (`/orders/`), edit lines/prices on submitted orders, approve orders (with automated stock verification), reject orders with reason, generate GST tax invoices (`/invoices/`), record stock dispatches, log customer payments, cancel invoices via credit note, download invoice PDFs, view customer directory and pricing. **Does not have access to accounting reports or production screens.** |
-| `production1` | **Production** | Record incoming raw material & packaging purchases (`/purchase/new/`), execute batch production runs against BOM (`/production/new/`), record overhead expenses (labour, power) on runs (`/production/<id>/`), inspect real-time inventory balances, analyze unit costing and margins. Cannot place orders, approve sales, or create invoices. |
-| `accountant1` | **Accountant** | Financial and compliance reporting: access reporting suite (`/reports/`), download all 10 CSV reports, view all orders, view inventory balances and ledger, view batch costing, download invoice PDFs. **Strictly read-only:** cannot create or modify orders, invoices, dispatches, purchases, or runs. |
-| `owner1` | **Owner** | Full executive audit visibility: view reports suite (`/reports/`), view all orders, inspect stock balances, review production runs and batch costing, download invoice PDFs. Carries `view_dashboard` permission in code (though an executive dashboard page is not yet implemented in `urls.py`). |
+| `production1` | **Production** | Record incoming raw material and packaging purchases (`/purchase/new/`), execute batch production runs against the BOM (`/production/new/`), record overhead expenses (labour, power) on runs (`/production/<id>/`), inspect real-time inventory balances, analyze unit costing and margins. Cannot place orders, approve sales, or create invoices. |
+| `accountant1` | **Accountant** | Financial and compliance reporting: access the reporting suite (`/reports/`), download all 10 CSV reports, view all orders, view inventory balances and ledger, view batch costing, download invoice PDFs. **Strictly read-only:** cannot create or modify orders, invoices, dispatches, purchases, or runs. |
+| `owner1` | **Owner** | Executive visibility: owner dashboard (`/dashboard/`: today's orders, stock levels, variance alerts, cost per packet, outstanding dues), reports suite (`/reports/`), all orders, stock balances, production runs and batch costing, invoice PDFs. |
 
 ---
 
@@ -109,36 +119,56 @@ All seeded test accounts share the password: **`Test@1234`**
 
 The solution is implemented using **Django 6 + SQLite** with server-rendered mobile-responsive HTML templates and **ReportLab** for GST-compliant PDF invoice generation. This stack was selected because a unified Django application guarantees strict ACID database transactions, relational integrity, and zero-setup deployment on SQLite without introducing the latency or maintenance overhead of external database servers or microservices. Server-rendered responsive templates eliminate frontend compilation build steps while providing a reliable interface for field sales representatives on mobile devices and operators on the factory floor.
 
+A native mobile app (Flutter) was started and then dropped to protect time for correctness. Field salesmen use the mobile-friendly web pages instead, which the brief allows ("web, mobile (native or PWA)").
+
 ---
 
 ## 5. Feature Matrix Against PDF Tiers
 
-| Feature Tier | Feature Name | Status | Real Implementation Details |
-|---|---|---|---|
-| **Must have** | Product & BOM Management | **Done** | Defined in `BOM` and `BOMLine` models with expected yields and recipe component quantities. |
-| **Must have** | Raw Material & Packaging Inward Purchase | **Done** | Implemented via `Purchase` model, `record_purchase` service, and web UI at `/purchase/new/`. Updates inventory via `StockLedger`. |
-| **Must have** | Batch Production Tracking & Variance | **Done** | Implemented in `ProductionRun` and `ProductionRunLine`. Computes yield and line variance in basis points with 3% tolerance flagging. |
-| **Must have** | Sales Order Workflow (Submit, Approve, Reject) | **Done** | Full state machine (`SUBMITTED` -> `APPROVED` / `REJECTED`). Stock availability re-checked before approval. |
-| **Must have** | GST-Compliant Tax Invoicing | **Done** | Auto-determines intra-state (CGST+SGST) vs inter-state (IGST). Sequences numbers by Indian Financial Year (`INV/2026-27/0001`). |
-| **Must have** | Dispatch & Stock Deductions | **Done** | Stock deducted strictly upon dispatch via append-only `StockLedger` using weighted-average issue value. |
-| **Must have** | Customer Payments & Outstanding Tracking | **Done** | Records payment mode, date, and reference. Computes invoice-level and customer-level outstanding balances in integer paise. |
-| **Must have** | Append-Only Audit Trail | **Done** | `StockLedger` and `AuditLog` enforce immutability at the model layer (`save()` and `delete()` raise `RuntimeError`). |
-| **Must have** | PDF Invoice Generation | **Done** | Built with ReportLab (`build_invoice_pdf`), downloadable at `/invoices/<id>/pdf/`. |
-| **Should have** | Production Costing & Overhead Allocation | **Done** | Direct labour and power expenses logged on runs; computes total cost, unit cost per good packet, and gross margin percentage. |
-| **Should have** | Credit Note & Invoice Cancellation | **Done** | `CreditNote` cancels issued invoice, reverses stock dispatch via `SALE_RETURN` ledger rows; blocked if payments exist. |
-| **Should have** | Financial & Inventory Reporting Suite | **Done** | 10 distinct reports with date range filtering and CSV export at `/reports/`. |
-| **Should have** | Role-Based Access Control (RBAC) | **Done** | 5 roles configured via Django groups; enforced via `core/permissions.py` decorators and helpers. |
-| **Should have** | Mobile-Friendly Web UI | **Done** | Clean, responsive viewport HTML templates for sales reps (`/orders/new/`, `/my-sales/`). |
-| **Stretch** | Owner Executive Dashboard | **Not done** | `view_dashboard` permission exists in `permissions.py`, but no dedicated dashboard route or view exists in `urls.py`. |
-| **Stretch** | Multi-product Overhead Allocation | **Not done** | Overheads attach directly to a single production run rather than amortizing across multiple concurrent runs. |
-| **Stretch** | Partial Dispatch & Backorders | **Not done** | Verified in `core/services.py`: dispatches must cover the full invoice quantity; no partial dispatches exist. |
-| **Stretch** | Purchase Returns to Vendors | **Not done** | Verified in `core/services.py`: no purchase return service or model exists. |
-| **Stretch** | Offline Sales Order Sync | **Not done** | Web-based online workflow only. |
-| **Stretch** | Batch Number & Expiry Date Tracking | **Not done** | Inventory tracked by item aggregated balance; no shelf-life or expiry dates. |
-| **Stretch** | Salesman GPS Location Check-in | **Not done** | No geolocation capture on order submission. |
-| **Stretch** | Tally XML / JSON Accounting Export | **Not done** | System exports standard CSV reports only. |
-| **Stretch** | Multilingual / Tamil UI Localization | **Not done** | Interface is English only. |
-| **Stretch** | External REST API | **Not done** | Server-rendered Django views only; no exposed API endpoints in `urls.py`. |
+### Must have
+
+| Feature | Status | Implementation Details |
+|---|---|---|
+| Login with at least three roles | **Done** | 5 roles (salesman, admin, production, accountant, owner) configured via Django groups; enforced by `core/permissions.py` decorators and helpers on every view. |
+| Product, customer, raw-material and BOM masters | **Done** | `Item`, `Customer`, `ProductPrice`, `BOM` and `BOMLine` models, editable in the Django admin (`/admin/`). |
+| Mobile-friendly order entry and admin approval | **Done** | Salesman order page (`/orders/new/`) with prices from the price list; admin approves or rejects with a stock check (`/orders/<id>/`). |
+| GST invoice as PDF | **Done** | Built with ReportLab (`build_invoice_pdf`), downloadable at `/invoices/<id>/pdf/`. CGST+SGST or IGST by place of supply; numbering by financial year (`INV/2026-27/0001`). |
+| Production run updates raw-material and finished-goods stock | **Done** | `record_production_run` writes ledger rows for every issue and for the finished output in one atomic transaction. |
+| Planned vs actual consumption and yield, with variance shown | **Done** | `ProductionRun` and `ProductionRunLine` store basis-point variance; flagged when strictly greater than the 3% tolerance (configurable). |
+| Stock summary and stock ledger | **Done** | Append-only `StockLedger` with the source document on every movement; stock pages and CSV reports. |
+| Sales register and stock report, exportable to CSV | **Done** | Reports suite at `/reports/` (see Should have for the full list). |
+
+### Should have
+
+| Feature | Status | Implementation Details |
+|---|---|---|
+| Purchases and supplier records | **Done** | `Supplier` and `Purchase` models, `record_purchase` service, web form at `/purchase/new/`. |
+| Payments, outstanding and ageing | **Done** | Payment mode, date and reference; invoice-level and customer-level outstanding in integer paise; outstanding report with ageing. |
+| Cost per packet with overheads | **Done** | Labour and gas/power expenses logged against a run; total cost, cost per good packet and margin shown on the run page. |
+| GST summary report | **Done** | Outward-supply GST summary with CGST, SGST and IGST totals in the reports suite. |
+| Variance alerts beyond tolerance | **Done** | Red flags on the production run page and a variance alerts card on the owner dashboard. |
+| Owner dashboard | **Done** | `/dashboard/`: today's orders, stock levels, variance alerts, latest cost per packet, outstanding dues. |
+| Reports suite | **Done** | 10 reports with date-range filtering and CSV export: sales register, customer-wise sales, product-wise sales, GST summary, purchase register, stock summary, stock ledger, production and wastage, payments and collections, outstanding with ageing. |
+
+### Additional features built
+
+| Feature | Status | Implementation Details |
+|---|---|---|
+| Credit note and invoice cancellation | **Done** | `CreditNote` cancels an issued invoice and reverses the stock dispatch with `SALE_RETURN` ledger rows; blocked if payments exist. Invoices are never deleted. |
+| Append-only audit trail | **Done** | `StockLedger` and `AuditLog` refuse edits and deletes at the model layer; every state-changing action writes an audit row in the same transaction. |
+
+### Stretch goals (from the brief)
+
+| Stretch goal | Status |
+|---|---|
+| Offline order capture with sync | Not done |
+| Batch and expiry tracking | Not done |
+| Reorder levels and low-stock alerts | Not done |
+| Production planning from pending orders | Not done |
+| Salesman route or visit log with GPS | Not done |
+| Tally-compatible export | Not done |
+| e-Invoice / e-Way Bill data format | Not done |
+| Tamil language interface | Not done |
 
 ---
 
@@ -158,12 +188,14 @@ The benchmark simulates a standard operating cycle: opening inventory, a purchas
 | **Murukku post-dispatch** | 88 pcs | 88 pcs | **Match** | 238 pcs available - 150 pcs dispatched to Retailer A = 88 pcs remaining. |
 | **Yield Variance** | -6.00% (-600 bp) | -6.00% | **Flagged** | Expected 200 pkts, actual 188 pkts: `((188 - 200) / 200) * 10000 = -600 bp`. Exceeds 3.00% tolerance (`\|-600\| > 300`). |
 | **Cooking Oil Variance** | +5.00% (+500 bp) | +5.00% | **Flagged** | Standard 10,000 ml, actual 10,500 ml: `((10500 - 10000) / 10000) * 10000 = +500 bp`. Exceeds 3.00% tolerance (`\|+500\| > 300`). |
-| **Pouch Variance** | -3.00% (-300 bp) | -3.00% | **Not Flagged** | Standard 200 pcs, actual 194 pcs: `((194 - 200) / 200) * 10000 = -300 bp`. **Not flagged because the rule is strictly greater than 3% tolerance (`\|-300\| > 300` evaluates to False).** |
-| **Retailer A Invoice Total** | Rs 7,875.00 | Rs 7,875.00 | **Match** | Taxable Rs 7,500.00 (150 pkts @ Rs 50) + CGST 2.5% (Rs 187.50) + SGST 2.5% (Rs 187.50) = Rs 7,875.00 (Intra-state, TN code 33). |
+| **Pouch Variance** | -3.00% (-300 bp) | -3.00% | **Not Flagged** | Standard 200 pcs, actual 194 pcs: `((194 - 200) / 200) * 10000 = -300 bp`. **Not flagged because the rule is strictly greater than the 3% tolerance (`\|-300\| > 300` evaluates to False).** |
+| **Retailer A Invoice Total** | Rs 7,875.00 | Rs 7,875.00 | **Match** | Taxable Rs 7,500.00 (150 pkts @ Rs 50) + CGST 2.5% (Rs 187.50) + SGST 2.5% (Rs 187.50) = Rs 7,875.00 (intra-state, TN code 33). |
 | **Retailer A Outstanding** | Rs 3,875.00 | Rs 3,875.00 | **Match** | Invoice Total Rs 7,875.00 - UPI Payment Rs 4,000.00 = Rs 3,875.00. |
-| **Distributor B Order Status** | Blocked (Shortage 32) | Blocked (Shortage 32) | **Match** | Ordered 120 pkts, only 88 pkts available. Approval blocked with shortage warning. Customer in Karnataka (code 29; IGST applies). |
-| **Cost per Packet** | Rs 31.14 | Rs 31.14 | **Match** | Total cost Rs 5,855.00 divided across 188 good packets = 3,114.36 paise -> rounded half up to 3,114 paise (Rs 31.14). |
+| **Distributor B Order Status** | Blocked (Shortage 32) | Blocked (Shortage 32) | **Match** | Ordered 120 pkts, only 88 pkts available. Approval blocked with shortage warning. Customer in Karnataka (code 29; IGST applies if invoiced). |
+| **Cost per Packet** | Rs 31.14 | Rs 31.14 | **Match** | Total cost Rs 5,855.00 divided across 188 good packets = 3,114.36 paise, rounded half up to 3,114 paise (Rs 31.14). |
 | **Gross Margin %** | 37.72% | 37.72% | **Match** | Selling price Rs 50.00 - Unit cost Rs 31.14 = Margin Rs 18.86. Margin %: `(18.86 / 50.00) * 100 = 37.72%` (3,772 bp). |
+
+**Differences from the brief:** none in the checked results. The brief leaves the cost per packet to the candidate (valuation method and overhead rule); ours is weighted average with overheads absorbed by the good packets of the run, as shown below. The brief's pouch count (306 = 194 consumed) is reproduced by consuming packaging on actual use, not at the BOM standard of 200.
 
 ---
 
@@ -215,14 +247,15 @@ The benchmark simulates a standard operating cycle: opening inventory, a purchas
 
 ## 7. How to Run the Benchmark Manually in the Web UI
 
-Follow these 9 sequential steps in your browser:
+Use a **fresh database** (setup steps 1 to 4, without `run_benchmark`). Then follow these steps in your browser:
 
 > **Important Operational Notes:**
 > 1. The inward purchase (Step 1) **must be recorded before** the production run (Step 2) because stock issuance computes cost using the weighted-average inventory valuation active at that precise instant.
 > 2. On the production screen (`/production/new/`), raw material issues, good output, scrap pouches, and cartons are entered on the **exact same form submission**.
+> 3. Order numbers and invoice numbers below assume a fresh database.
 
 * **Step 1: Record Raw Material Purchase**
-  * Login as `production1` (or `admin1`).
+  * Log in as `production1`.
   * Navigate to **`/purchase/new/`**.
   * Select Supplier `Sri Murugan Traders`, Item `Flour`, Quantity `60`, Unit `kg`, Rate `45.00`, and Invoice No `INV-BM-01`.
   * Click **Record Purchase**. Flour stock increases to 160 kg with a weighted-average cost of Rs 43.125/kg.
@@ -230,86 +263,95 @@ Follow these 9 sequential steps in your browser:
   * As `production1`, navigate to **`/production/new/`**.
   * Select Product `Murukku 200 g`.
   * Enter Material Issues: Flour `40`, Cooking oil `10.5`, Salt and spice mix `1.2`.
-  * Enter Output & Packaging: Actual good packets `188`, Damaged pouches `6`, Cartons used `9`.
-  * Click **Record Production Run**. You will be redirected to `/production/1/`. Notice yield variance (-6.00%) and oil variance (+5.00%) are highlighted in red flags; pouches (-3.00%) is unflagged.
+  * Enter Output and Packaging: Actual good packets `188`, Damaged pouches `6`, Cartons used `9`.
+  * Click **Record Production Run**. You will be redirected to `/production/1/`. Notice yield variance (-6.00%) and oil variance (+5.00%) are flagged in red; pouches (-3.00%) is not flagged.
 * **Step 3: Attach Overhead Expenses**
   * On page **`/production/1/`**, scroll to the **Record Expense** form.
   * Select `Labour`, enter Amount `1200.00`, Note `Shift labour`, click **Add Expense**.
   * Select `Gas and power`, enter Amount `600.00`, Note `Frying fuel`, click **Add Expense**.
-  * The Costing Summary updates immediately to: Material Cost Rs 4,055.00, Overheads Rs 1,800.00, Total Cost Rs 5,855.00, Cost per Packet **Rs 31.14**, Margin **37.72%**.
+  * The Costing Summary updates to: Material Cost Rs 4,055.00, Overheads Rs 1,800.00, Total Cost Rs 5,855.00, Cost per Packet **Rs 31.14**, Margin **37.72%**.
 * **Step 4: Place Sales Order for Retailer A**
-  * Logout and log in as `salesman_a`.
+  * Log out and log in as `salesman_a` (use a phone-sized browser window to see the mobile view).
   * Navigate to **`/orders/new/`**.
   * Select Customer `Retailer A`, enter Quantity `150` for `Murukku 200 g`, and click **Place Order**. Order #1 is created in `SUBMITTED` status.
 * **Step 5: Approve Order for Retailer A**
-  * Logout and log in as `admin1`.
+  * Log out and log in as `admin1`.
   * Navigate to **`/orders/1/`**.
-  * Review the Stock Check table (150 ordered, 238 available, 0 shortage). Click **Approve Order**. Status transitions to `APPROVED`.
+  * Review the Stock Check table (150 ordered, 238 available, 0 shortage). Click **Approve Order**. Status becomes `APPROVED`.
 * **Step 6: Generate GST Tax Invoice**
   * On **`/orders/1/`**, click **Create Invoice**.
-  * Invoice `INV/2026-27/0001` is issued for Rs 7,875.00 (Taxable Rs 7,500.00 + CGST Rs 187.50 + SGST Rs 187.50). Status transitions to `INVOICED`.
+  * Invoice `INV/2026-27/0001` is issued for Rs 7,875.00 (Taxable Rs 7,500.00 + CGST Rs 187.50 + SGST Rs 187.50). Status becomes `INVOICED`.
 * **Step 7: Record Dispatch**
   * On **`/orders/1/`**, click **Record Dispatch**.
-  * 150 packets are deducted from inventory in `StockLedger`. Status changes to `DISPATCHED`. Murukku stock drops from 238 to 88 packets.
+  * 150 packets are deducted from inventory in `StockLedger`. Status becomes `DISPATCHED`. Murukku stock drops from 238 to 88 packets.
 * **Step 8: Place Order for Distributor B (Demonstrating Stock Block)**
-  * Logout and log in as `salesman_a`.
+  * Log out and log in as `salesman_b`.
   * Navigate to **`/orders/new/`**.
   * Select Customer `Distributor B`, enter Quantity `120` for `Murukku 200 g`, click **Place Order**. Order #2 is created.
 * **Step 9: Attempt Approval and Record Payment**
-  * Logout and log in as `admin1`.
+  * Log out and log in as `admin1`.
   * Navigate to **`/orders/2/`**.
   * Review the Stock Check table: ordered 120, available 88, shortage 32 packets.
-  * Click **Approve Order**. The system halts the operation and displays an error banner: `Insufficient stock: Murukku 200 g short by 32`.
+  * Click **Approve Order**. The system halts the operation and shows an error banner: `Insufficient stock: Murukku 200 g short by 32`. (Distributor B is in Karnataka, so IGST would apply if invoiced.)
   * Navigate to **`/invoices/1/`** (Retailer A's invoice). In the Record Payment form, enter Amount `4000.00`, Mode `UPI`, Reference `UPI-RET-A-001`, click **Record Payment**.
   * The invoice shows Total Paid Rs 4,000.00, Outstanding **Rs 3,875.00**. Click **Download PDF** to inspect the generated tax invoice.
+* **Step 10: Reports and Dashboard**
+  * Log in as `accountant1`, open **`/reports/`**, choose a date range and download any report as CSV (for example the sales register and the stock ledger).
+  * Log in as `owner1` and open **`/dashboard/`** to see today's orders, stock levels, variance alerts, cost per packet and outstanding dues.
 
 ---
 
 ## 8. Architectural Assumptions
 
-1. **Storage & Units:** Implemented on SQLite. All monetary values are strictly stored as integer paise (Rs 1.00 = 100 paise; Rs 45.00 = 4,500 paise). All inventory quantities are stored as integers in immutable base units (grams `g`, millilitres `ml`, pieces `pcs`). Floats are strictly prohibited in calculation and storage to eliminate floating-point rounding errors.
-2. **Rounding Rule:** Python `Decimal` with `ROUND_HALF_UP` is enforced across all division calculations (basis points, taxes, unit costs, and margins).
-3. **Inventory Valuation:** Moving weighted-average cost is used for material issues and inventory valuation. Opening stock of 50 finished packets of Murukku 200 g is valued at 0 paise (opening production cost was unspecified).
-4. **Overhead Allocation:** Direct overheads (labour, power) attach directly to the specific production run where they were incurred and are absorbed entirely across the **good packets** produced in that run.
-5. **GST Rules & Entity State:** Factory is located in Tamil Nadu (`state_code = "33"`). Intra-state sales (Tamil Nadu, state code 33) split GST evenly into CGST (50%) and SGST (50%). Inter-state sales (Karnataka, state code 29) incur 100% IGST. Test GSTINs are dummy placeholders; HSN 2106 (edible preparations / snacks) is assumed for Murukku 200 g.
-6. **Stock Movement Trigger:** Finished goods inventory is deducted **strictly upon physical dispatch**, not upon order placement, approval, or invoice generation.
-7. **Packaging vs Raw Material Consumption:** Packaging items (pouches and cartons) are deducted based on **actual usage** (e.g., 194 pouches = 188 good packets + 6 damaged pouches; 9 cartons). Raw materials (flour, oil, spices) are deducted based on the actual quantity issued into production.
-8. **Invoicing & Cancellation Integrity:** An invoice with recorded payments cannot be cancelled. Cancelling an unpaid invoice automatically generates a formal Credit Note, reverses associated stock dispatch rows, and sets the sales order to `CANCELLED`.
-9. **UI & Access Scopes:** Sales representatives access a mobile-optimized web interface instead of a native application. The `admin` role manages operational orders and invoices but has no permission to access the management reporting suite (`/reports/`), which is reserved for `accountant` and `owner`.
+1. **Storage and Units:** Implemented on SQLite. All monetary values are stored as integer paise (Rs 1.00 = 100 paise; Rs 45.00 = 4,500 paise). All inventory quantities are stored as integers in base units (grams `g`, millilitres `ml`, pieces `pcs`). Floats are not used in calculation or storage, which avoids floating-point rounding errors.
+2. **Rounding Rule:** Python `Decimal` with `ROUND_HALF_UP` is used for all division calculations (basis points, taxes, unit costs, and margins).
+3. **Inventory Valuation:** Moving weighted-average cost is used for material issues and inventory valuation. Opening stock of 50 finished packets of Murukku 200 g is valued at 0 paise (opening production cost was not given).
+4. **Overhead Allocation:** Direct overheads (labour, power) attach to the specific production run where they were incurred and are absorbed entirely by the **good packets** of that run.
+5. **GST Rules and Entity State:** The factory is in Tamil Nadu (`state_code = "33"`). Intra-state sales (state code 33) split GST evenly into CGST and SGST. Inter-state sales (for example Karnataka, state code 29) incur IGST. GSTINs, the factory address and names are dummy placeholders; HSN 2106 (edible preparations) is assumed for Murukku 200 g.
+6. **Stock Movement Trigger:** Finished goods are deducted **only at dispatch**, not at order placement, approval, or invoice generation.
+7. **Packaging vs Raw Material Consumption:** Packaging items (pouches and cartons) are deducted on **actual usage** (194 pouches = 188 good packets + 6 damaged; 9 cartons). Raw materials (flour, oil, spices) are deducted on the actual quantity issued into production.
+8. **Invoicing and Cancellation Integrity:** An invoice with recorded payments cannot be cancelled. Cancelling an unpaid invoice generates a credit note, reverses the dispatch ledger rows, and sets the order to `CANCELLED`.
+9. **Variance Rule:** A line or the yield is flagged only when its variance is strictly greater than the tolerance (3% by default, set in `settings.py`).
+10. **UI and Access Scopes:** Salesmen use a mobile-friendly web interface instead of a native application. The `admin` role manages orders and invoices but cannot open the reports suite (`/reports/`), which is for `accountant` and `owner`.
 
 ---
 
 ## 9. Known Technical Gaps and Limitations
 
-* **Order Race Condition:** Two concurrently approved orders can compete for the same finished goods inventory. The system prevents negative stock at the moment of dispatch (re-checking balance), but order approval does not create a provisional stock reservation.
-* **Reporting Output:** All 10 reports in `/reports/` are downloadable as CSV only; there is no PDF report export (PDF export is implemented for individual tax invoices only).
-* **Database Trigger Protections:** Ledger immutability is enforced via Django model `save()` and `delete()` method overrides. Direct raw SQL execution in SQLite would bypass Python-layer immutability; in an enterprise production environment, database-level triggers or restricted role grants would be required.
-* **Overhead Spanning:** Overheads cannot be amortized or apportioned across multiple concurrent product batches or runs.
-* **Owner Dashboard:** While `view_dashboard` is defined in `core/permissions.py`, no executive dashboard page or URL route currently exists in `core/urls.py`.
-* **Missing Operational Features:** Verified in `core/services.py`: there is **no partial dispatch** mechanism (orders must be dispatched in full) and **no purchase return** workflow. The system does not support offline order synchronization, batch/lot expiry tracking, salesman GPS tracking, Tally XML integration, or multilingual/Tamil interfaces.
+* **No native mobile app and no hosted demo by default:** the salesman side is a mobile-friendly web page; the app runs locally with the commands in section 2.
+* **Order race condition:** two approved orders can compete for the same finished goods. The system never lets stock go negative, because dispatch re-checks the balance, but approval does not reserve stock.
+* **Reports are CSV only:** there is no PDF export for reports (PDF is implemented for individual tax invoices only).
+* **Ledger protection is in the application layer:** immutability is enforced by Django model `save()` and `delete()` overrides. Raw SQL on the SQLite file would bypass it; a production system would add database triggers or restricted database roles.
+* **Overheads are not apportioned:** they attach to a single production run and cannot be split across concurrent batches or products.
+* **No partial dispatch and no purchase returns:** orders are dispatched in full, and there is no vendor-return workflow.
+* **No external REST API:** the application is server-rendered only.
+* **Not built:** offline order synchronization, batch and expiry tracking, reorder alerts, production planning, GPS visit logs, Tally export, e-Invoice mock, Tamil interface.
 
 ---
 
 ## 10. Automated Test Suite
 
 ### Running the Tests
-To run the automated test suite, navigate to the `backend/` directory and execute:
+Navigate to the `backend/` directory and execute:
 
 ```bash
 python manage.py test core
 ```
 
-### Test Suite Coverage
-The application includes comprehensive unit and integration tests across 8 test suites:
+The full run takes a few minutes.
 
-1. **`core.tests` (`StockFoundationTests`, `ServiceLayerTests`, `ReportTests`, `PDFTests`):** Validates base unit conversions, weighted-average issue valuation, ledger immutability constraints, order approval and rejection rules, GST tax calculations, invoice and credit note generation, payment tracking, CSV report generators, and ReportLab PDF layout.
-2. **`core.tests_permissions`:** Exhaustively tests the RBAC matrix across all 5 roles (`salesman`, `admin`, `production`, `accountant`, `owner`), ensuring strict separation between state-changing and read-only actions.
-3. **`core.tests_web`:** Tests mobile-friendly salesman views (order creation form validation, row-level isolation, and personal sales aggregations).
-4. **`core.tests_web_admin`:** Tests administrative actions (order line updates, approvals, rejections, tax invoicing, dispatch execution, payment logging, and credit note cancellations).
-5. **`core.tests_web_production`:** Tests production workflows (inward purchase logging, production run creation, raw material issues, and scrap pouch/carton tracking).
-6. **`core.tests_web_costing`:** Tests overhead expense logging, material vs overhead expense breakdown, unit packet costing, and gross margin calculations.
-7. **`core.tests_web_reports`:** Verifies access control, date range filters, and CSV downloads across all 10 reports.
-8. **`core.tests_seed_supplier`:** Validates idempotency of baseline benchmark seed scripts.
+### Test Suite Coverage
+The tests are spread over 9 test modules:
+
+1. **`core.tests`:** unit conversions, weighted-average issue valuation, ledger immutability, order approval and rejection rules, GST calculations, invoice and credit note generation, payment tracking, CSV report generators, and PDF invoice output.
+2. **`core.tests_permissions`:** the role-based access matrix across all 5 roles, separating state-changing from read-only actions.
+3. **`core.tests_web`:** salesman views (order form validation, row-level isolation, personal sales summary).
+4. **`core.tests_web_admin`:** admin actions (line edits, approvals, rejections, invoicing, dispatch, payments, credit-note cancellations).
+5. **`core.tests_web_production`:** purchases, production runs, material issues, and scrap pouch/carton tracking.
+6. **`core.tests_web_costing`:** overhead expenses, cost breakdown, cost per packet, and margin.
+7. **`core.tests_web_reports`:** access control, date-range filters, and CSV downloads across all 10 reports.
+8. **`core.tests_web_dashboard`:** owner dashboard access, figures, and empty state.
+9. **`core.tests_seed_supplier`:** idempotency of the baseline seed scripts.
 
 ---
-*Authored as part of the NIT Trichy CDI Winter Internship 2026 submission by Suriya.*
+*Authored as part of the NIT Trichy CDI Winter Internship 2026 submission by Aswin.*
