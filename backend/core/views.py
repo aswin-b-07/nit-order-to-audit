@@ -75,6 +75,7 @@ def _base_context(user):
         "can_record_production_run": can(user, "record_production_run"),
         "can_view_production": can(user, "view_production"),
         "can_view_reports": can(user, "view_reports"),
+        "can_view_dashboard": can(user, "view_dashboard"),
     }
 
 
@@ -1383,5 +1384,117 @@ def report_download_csv(request, name):
     filename = f"{norm_name.replace('-', '_')}.csv"
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+format_bp = _format_variance_bp
+
+
+@login_required
+def dashboard(request):
+    require(request.user, "view_dashboard")
+
+    # 1. Today's orders
+    today = timezone.localdate()
+    today_orders = Order.objects.filter(created_at__date=today).select_related("customer")
+    today_orders_count = today_orders.count()
+    today_total_paise = sum(order_total_paise(o) for o in today_orders)
+    today_orders_total_formatted = format_rupees(today_total_paise)
+
+    from collections import Counter
+    status_counter = Counter(o.status for o in today_orders)
+    status_counts = [
+        {"status": st.value, "count": status_counter.get(st.value, 0)}
+        for st in Order.Status
+        if status_counter.get(st.value, 0) > 0
+    ]
+
+    # 2. Stock levels (reuse stock_summary and display-unit helper)
+    from core.reports import stock_summary
+    stock_report_data = stock_summary()
+    stock_levels = []
+    for r in stock_report_data["rows"]:
+        # r: [name, kind, base_unit, opening, receipts, issues, adjustments, closing]
+        item_name = r[0]
+        base_unit = r[2]
+        closing_qty = r[7]
+        stock_levels.append({
+            "name": item_name,
+            "balance_display": _format_base_quantity(closing_qty, base_unit),
+            "unit": _base_unit_display(base_unit),
+            "closing": closing_qty,
+        })
+
+    # 3. Variance alerts (5 most recent production runs with yield_flagged or flagged line)
+    from django.db.models import Q
+    flagged_runs_qs = (
+        ProductionRun.objects.filter(
+            Q(yield_flagged=True) | Q(lines__flagged=True)
+        )
+        .distinct()
+        .select_related("bom__product")
+        .prefetch_related("lines__item")
+        .order_by("-id")[:5]
+    )
+    variance_alerts = []
+    for r in flagged_runs_qs:
+        flagged_line_names = [line.item.name for line in r.lines.all() if line.flagged]
+        variance_alerts.append({
+            "run": r,
+            "product_name": r.bom.product.name,
+            "yield_variance": format_bp(r.yield_variance_bp),
+            "flagged_lines": flagged_line_names,
+        })
+
+    # 4. Cost per packet (latest production run using run_costing)
+    latest_run = (
+        ProductionRun.objects.select_related("bom__product")
+        .prefetch_related("expenses")
+        .order_by("-id")
+        .first()
+    )
+    latest_costing = None
+    if latest_run:
+        costing = run_costing(latest_run)
+        cpp = costing.get("cost_per_packet_paise")
+        sp = costing.get("selling_price_paise")
+        margin = costing.get("margin_per_packet_paise")
+        margin_bp = costing.get("margin_bp")
+        latest_costing = {
+            "run": latest_run,
+            "cost_per_packet_formatted": format_rupees(cpp) if cpp is not None else "-",
+            "selling_price_formatted": format_rupees(sp) if sp is not None else "-",
+            "margin_formatted": format_rupees(margin) if margin is not None else "-",
+            "margin_pct": format_bp(margin_bp) if margin_bp is not None else "-",
+        }
+
+    # 5. Outstanding dues (total across customers and customers with balance, largest first)
+    customers = Customer.objects.all()
+    customer_dues = []
+    total_outstanding_paise = 0
+    for c in customers:
+        due = customer_outstanding(c)
+        if due > 0:
+            total_outstanding_paise += due
+            customer_dues.append({
+                "customer": c,
+                "due_paise": due,
+                "due_formatted": format_rupees(due),
+            })
+    customer_dues.sort(key=lambda x: x["due_paise"], reverse=True)
+    total_outstanding_formatted = format_rupees(total_outstanding_paise)
+
+    ctx = _base_context(request.user)
+    ctx.update({
+        "today_orders_count": today_orders_count,
+        "today_orders_total_formatted": today_orders_total_formatted,
+        "status_counts": status_counts,
+        "stock_levels": stock_levels,
+        "variance_alerts": variance_alerts,
+        "latest_costing": latest_costing,
+        "customer_dues": customer_dues,
+        "total_outstanding_formatted": total_outstanding_formatted,
+    })
+    return render(request, "core/dashboard.html", ctx)
+
 
 

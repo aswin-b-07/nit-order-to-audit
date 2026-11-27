@@ -13,6 +13,9 @@
         {% if user.is_authenticated %}
             <nav class="nav-links">
                 <a href="{% url 'home' %}">Home</a>
+                {% if can_view_dashboard %}
+                    <a href="{% url 'dashboard' %}">Dashboard</a>
+                {% endif %}
                 {% if can_place_order %}
                     <a href="{% url 'order_create' %}">New Order</a>
                 {% endif %}

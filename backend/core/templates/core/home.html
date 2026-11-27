@@ -27,6 +27,12 @@
         {% elif is_admin %}
             <h3>Admin Portal</h3>
             <div class="card-grid">
+                {% if can_view_dashboard %}
+                    <a href="{% url 'dashboard' %}" class="portal-card">
+                        <span class="portal-card-title">Dashboard</span>
+                        <span class="portal-card-desc">Factory overview and key performance metrics</span>
+                    </a>
+                {% endif %}
                 <a href="{% url 'order_list' %}" class="portal-card">
                     <span class="portal-card-title">Orders</span>
                     <span class="portal-card-desc">Review, approve, and manage customer orders</span>

@@ -1,0 +1,176 @@
+{% extends "core/base.html" %}
+
+{% block title %}Dashboard - Order-to-Audit{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem;">
+        <h2 style="margin: 0;">Owner Dashboard</h2>
+    </div>
+
+    <!-- Top Row: Today's Orders & Outstanding Dues -->
+    <div class="grid-2col" style="margin-bottom: 1.5rem;">
+        <!-- Card: Today's Orders -->
+        <div class="card" style="margin-bottom: 0; background: #ffffff;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem;">Today's Orders</h3>
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #0f172a;">
+                    {{ today_orders_count }} <span style="font-size: 1rem; font-weight: 500; color: #64748b;">orders</span>
+                </div>
+                <div style="font-size: 1.25rem; font-weight: 600; color: #2563eb; margin-top: 0.25rem;">
+                    Total: Rs {{ today_orders_total_formatted }}
+                </div>
+            </div>
+
+            {% if status_counts %}
+                <h4 style="font-size: 0.9rem; margin-top: 1rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em; color: #64748b;">Status Breakdown</h4>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    {% for sc in status_counts %}
+                        <span class="badge badge-{{ sc.status|lower }}">{{ sc.status }}: {{ sc.count }}</span>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <p style="color: #64748b; font-size: 0.9rem; margin: 0;">No orders placed today.</p>
+            {% endif %}
+        </div>
+
+        <!-- Card: Outstanding Dues -->
+        <div class="card" style="margin-bottom: 0; background: #ffffff;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem;">Outstanding Dues</h3>
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size: 2rem; font-weight: 700; color: #dc2626;">
+                    Rs {{ total_outstanding_formatted }}
+                </div>
+                <p style="font-size: 0.9rem; color: #64748b; margin-top: 0.25rem;">Total outstanding receivables</p>
+            </div>
+
+            {% if customer_dues %}
+                <h4 style="font-size: 0.9rem; margin-top: 1rem; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em; color: #64748b;">Customer Balances</h4>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th class="text-right">Outstanding (Rs)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cd in customer_dues %}
+                                <tr>
+                                    <td data-label="Customer"><strong>{{ cd.customer.name }}</strong></td>
+                                    <td data-label="Outstanding (Rs)" class="text-right">Rs {{ cd.due_formatted }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p style="color: #64748b; font-size: 0.9rem; margin: 0;">No outstanding dues.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Middle Row: Cost per Packet & Variance Alerts -->
+    <div class="grid-2col" style="margin-bottom: 1.5rem;">
+        <!-- Card: Cost per Packet -->
+        <div class="card" style="margin-bottom: 0; background: #ffffff;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
+                <h3 style="margin: 0;">Cost per Packet</h3>
+                {% if latest_costing %}
+                    <a href="{% url 'production_detail' latest_costing.run.id %}" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem; min-height: 36px;">View Run #{{ latest_costing.run.id }}</a>
+                {% endif %}
+            </div>
+
+            {% if latest_costing %}
+                <p style="margin-bottom: 1rem; color: #64748b;">
+                    Latest run: <strong>#{{ latest_costing.run.id }}</strong> ({{ latest_costing.run.bom.product.name }})
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem;">
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem;">
+                        <span style="font-size: 0.8rem; color: #64748b; display: block;">Cost / packet</span>
+                        <strong style="font-size: 1.25rem; color: #0f172a;">Rs {{ latest_costing.cost_per_packet_formatted }}</strong>
+                    </div>
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem;">
+                        <span style="font-size: 0.8rem; color: #64748b; display: block;">Selling price</span>
+                        <strong style="font-size: 1.25rem; color: #0f172a;">Rs {{ latest_costing.selling_price_formatted }}</strong>
+                    </div>
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem;">
+                        <span style="font-size: 0.8rem; color: #64748b; display: block;">Margin</span>
+                        <strong style="font-size: 1.25rem; color: #16a34a;">Rs {{ latest_costing.margin_formatted }} ({{ latest_costing.margin_pct }})</strong>
+                    </div>
+                </div>
+            {% else %}
+                <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No production runs yet</p>
+            {% endif %}
+        </div>
+
+        <!-- Card: Variance Alerts -->
+        <div class="card" style="margin-bottom: 0; background: #ffffff;">
+            <h3 style="margin-top: 0; margin-bottom: 1rem;">Variance Alerts</h3>
+            {% if variance_alerts %}
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Run #</th>
+                                <th>Product</th>
+                                <th class="text-right">Yield Variance</th>
+                                <th>Flagged Lines</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alert in variance_alerts %}
+                                <tr>
+                                    <td data-label="Run #">
+                                        <a href="{% url 'production_detail' alert.run.id %}">#{{ alert.run.id }}</a>
+                                    </td>
+                                    <td data-label="Product">{{ alert.product_name }}</td>
+                                    <td data-label="Yield Variance" class="text-right">
+                                        <span class="badge badge-flagged" style="background-color: #dc2626; color: white; font-weight: bold;">{{ alert.yield_variance }}</span>
+                                    </td>
+                                    <td data-label="Flagged Lines">
+                                        {% if alert.flagged_lines %}
+                                            {{ alert.flagged_lines|join:", " }}
+                                        {% else %}
+                                            <span style="color: #64748b;">None</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No variance alerts</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Bottom Row: Stock Levels -->
+    <div class="card" style="margin-bottom: 0; background: #ffffff;">
+        <h3 style="margin-top: 0; margin-bottom: 1rem;">Stock Levels</h3>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th class="text-right">Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in stock_levels %}
+                        <tr>
+                            <td data-label="Item"><strong>{{ item.name }}</strong></td>
+                            <td data-label="Balance" class="text-right">{{ item.balance_display }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="2">No stock records found.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
