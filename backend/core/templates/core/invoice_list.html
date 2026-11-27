@@ -4,39 +4,43 @@
 
 {% block content %}
 <div class="card">
-    <h2>Invoices</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem;">
+        <h2 style="margin: 0;">Invoices</h2>
+    </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Invoice #</th>
-                <th>Date</th>
-                <th>Customer</th>
-                <th>Supply Type</th>
-                <th>Total (Rs)</th>
-                <th>Outstanding (Rs)</th>
-                <th>Status</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for item in invoices_data %}
+    <div class="table-responsive">
+        <table>
+            <thead>
                 <tr>
-                    <td>{{ item.invoice.number }}</td>
-                    <td>{{ item.invoice.invoice_date|date:"d-m-Y" }}</td>
-                    <td>{{ item.invoice.customer_name }}</td>
-                    <td>{{ item.invoice.supply_type }}</td>
-                    <td>Rs {{ item.total_formatted }}</td>
-                    <td>Rs {{ item.outstanding_formatted }}</td>
-                    <td><span class="badge">{{ item.invoice.status }}</span></td>
-                    <td><a href="{% url 'invoice_detail' item.invoice.id %}" class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">View</a></td>
+                    <th>Invoice #</th>
+                    <th>Date</th>
+                    <th>Customer</th>
+                    <th>Supply Type</th>
+                    <th class="text-right">Total (Rs)</th>
+                    <th class="text-right">Outstanding (Rs)</th>
+                    <th>Status</th>
+                    <th>Action</th>
                 </tr>
-            {% empty %}
-                <tr>
-                    <td colspan="8">No invoices found.</td>
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                {% for item in invoices_data %}
+                    <tr>
+                        <td data-label="Invoice #">{{ item.invoice.number }}</td>
+                        <td data-label="Date">{{ item.invoice.invoice_date|date:"d-m-Y" }}</td>
+                        <td data-label="Customer">{{ item.invoice.customer_name }}</td>
+                        <td data-label="Supply Type">{{ item.invoice.supply_type }}</td>
+                        <td data-label="Total (Rs)" class="text-right">Rs {{ item.total_formatted }}</td>
+                        <td data-label="Outstanding (Rs)" class="text-right">Rs {{ item.outstanding_formatted }}</td>
+                        <td data-label="Status"><span class="badge badge-{{ item.invoice.status|lower }}">{{ item.invoice.status }}</span></td>
+                        <td data-label="Action"><a href="{% url 'invoice_detail' item.invoice.id %}" class="btn btn-primary" style="padding: 0.3rem 0.65rem; font-size: 0.85rem; min-height: 36px;">View</a></td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="8">No invoices found.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 {% endblock %}

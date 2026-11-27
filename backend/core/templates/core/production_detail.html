@@ -4,78 +4,82 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
-        <h2>Production Run #{{ run.id }}</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem;">
+        <h2 style="margin: 0;">Production Run #{{ run.id }}</h2>
         <a href="{% url 'production_list' %}" class="btn btn-secondary">Back to List</a>
     </div>
 
-    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem;">
-        <p><strong>Product:</strong> {{ run.bom.product.name }}</p>
-        <p><strong>Date:</strong> {{ run.created_at|date:"Y-m-d H:i" }}</p>
-        <p><strong>Created By:</strong> {{ run.created_by.username|default:"-" }}</p>
-        <p><strong>Batches:</strong> {{ run.batches }}</p>
-        <p><strong>Total Material Cost:</strong> Rs {{ material_cost_formatted }}</p>
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem;">
+        <p style="margin-bottom: 0.4rem;"><strong>Product:</strong> {{ run.bom.product.name }}</p>
+        <p style="margin-bottom: 0.4rem;"><strong>Date:</strong> {{ run.created_at|date:"Y-m-d H:i" }}</p>
+        <p style="margin-bottom: 0.4rem;"><strong>Created By:</strong> {{ run.created_by.username|default:"-" }}</p>
+        <p style="margin-bottom: 0.4rem;"><strong>Batches:</strong> {{ run.batches }}</p>
+        <p style="margin-bottom: 0;"><strong>Total Material Cost:</strong> Rs {{ material_cost_formatted }}</p>
     </div>
 
     <h3>Yield Summary</h3>
-    <table style="margin-bottom: 2rem;">
-        <thead>
-            <tr>
-                <th>Expected Yield</th>
-                <th>Actual Output</th>
-                <th>Variance %</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td data-label="Expected Yield">{{ run.expected_output }} pcs</td>
-                <td data-label="Actual Output">{{ run.actual_output }} pcs</td>
-                <td data-label="Variance %">{{ yield_variance_pct }}</td>
-                <td data-label="Status">
-                    {% if run.yield_flagged %}
-                        <span class="badge" style="background-color: #e53e3e; color: white; font-weight: bold;">FLAGGED</span>
-                    {% else %}
-                        <span class="badge" style="background-color: #38a169; color: white;">OK</span>
-                    {% endif %}
-                </td>
-            </tr>
-        </tbody>
-    </table>
-
-    <h3>Consumption: Planned vs Actual</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Item</th>
-                <th>Planned</th>
-                <th>Actual</th>
-                <th>Variance %</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for line in lines_data %}
+    <div class="table-responsive">
+        <table>
+            <thead>
                 <tr>
-                    <td data-label="Item">{{ line.item.name }}</td>
-                    <td data-label="Planned">{{ line.planned_display }}</td>
-                    <td data-label="Actual">{{ line.actual_display }}</td>
-                    <td data-label="Variance %">{{ line.variance_pct }}</td>
+                    <th class="text-right">Expected Yield</th>
+                    <th class="text-right">Actual Output</th>
+                    <th class="text-right">Variance %</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td data-label="Expected Yield" class="text-right">{{ run.expected_output }} pcs</td>
+                    <td data-label="Actual Output" class="text-right">{{ run.actual_output }} pcs</td>
+                    <td data-label="Variance %" class="text-right">{{ yield_variance_pct }}</td>
                     <td data-label="Status">
-                        {% if line.flagged %}
-                            <span class="badge" style="background-color: #e53e3e; color: white; font-weight: bold;">FLAGGED</span>
+                        {% if run.yield_flagged %}
+                            <span class="badge badge-flagged" style="background-color: #dc2626; color: white; font-weight: bold;">FLAGGED</span>
                         {% else %}
-                            <span class="badge" style="background-color: #38a169; color: white;">OK</span>
+                            <span class="badge badge-ok" style="background-color: #16a34a; color: white; font-weight: bold;">OK</span>
                         {% endif %}
                     </td>
                 </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
+
+    <h3>Consumption: Planned vs Actual</h3>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th class="text-right">Planned</th>
+                    <th class="text-right">Actual</th>
+                    <th class="text-right">Variance %</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in lines_data %}
+                    <tr>
+                        <td data-label="Item">{{ line.item.name }}</td>
+                        <td data-label="Planned" class="text-right">{{ line.planned_display }}</td>
+                        <td data-label="Actual" class="text-right">{{ line.actual_display }}</td>
+                        <td data-label="Variance %" class="text-right">{{ line.variance_pct }}</td>
+                        <td data-label="Status">
+                            {% if line.flagged %}
+                                <span class="badge badge-flagged" style="background-color: #dc2626; color: white; font-weight: bold;">FLAGGED</span>
+                            {% else %}
+                                <span class="badge badge-ok" style="background-color: #16a34a; color: white; font-weight: bold;">OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 
     <div style="margin-top: 2rem;">
         <h3>Cost Summary</h3>
-        <p style="color: #4a5568; font-style: italic; margin-bottom: 1rem;">
+        <p style="color: #64748b; font-style: italic; margin-bottom: 1rem;">
             Weighted-average costing; overheads divided by good packets.
         </p>
 
@@ -90,50 +94,52 @@
                 {% endif %}
                 <div><strong>Total Cost:</strong> Rs {{ total_cost_formatted }}</div>
                 <div><strong>Good Packets:</strong> {{ costing.good_packets }}</div>
-                <div style="font-size: 1.1rem; color: #1a202c;">
+                <div style="font-size: 1.05rem; color: #0f172a;">
                     <strong>Cost per packet:</strong> Rs {{ cost_per_packet_display }}
                 </div>
                 <div><strong>Selling Price per packet:</strong> Rs {{ selling_price_display }}</div>
-                <div style="font-size: 1.1rem; color: #2b6cb0;">
+                <div style="font-size: 1.05rem; color: #2563eb;">
                     <strong>Margin:</strong> {{ margin_pct_display }}
                 </div>
             </div>
         </div>
     </div>
 
-    <div style="margin-top: 2rem;">
+    <div style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.25rem;">
         <h3>Expenses</h3>
 
-        <table style="margin-bottom: 1.5rem;">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Amount (Rs)</th>
-                    <th>Note</th>
-                    <th>Recorded By</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for exp in expenses_data %}
+        <div class="table-responsive">
+            <table>
+                <thead>
                     <tr>
-                        <td data-label="ID">#{{ exp.expense.id }}</td>
-                        <td data-label="Date">{{ exp.expense.created_at|date:"Y-m-d H:i" }}</td>
-                        <td data-label="Type">{{ exp.kind_display }}</td>
-                        <td data-label="Amount (Rs)">Rs {{ exp.amount_formatted }}</td>
-                        <td data-label="Note">{{ exp.expense.note|default:"-" }}</td>
-                        <td data-label="Recorded By">{{ exp.expense.created_by.username|default:"-" }}</td>
+                        <th>ID</th>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th class="text-right">Amount (Rs)</th>
+                        <th>Note</th>
+                        <th>Recorded By</th>
                     </tr>
-                {% empty %}
-                    <tr>
-                        <td colspan="6">No expenses recorded for this run.</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {% for exp in expenses_data %}
+                        <tr>
+                            <td data-label="ID">#{{ exp.expense.id }}</td>
+                            <td data-label="Date">{{ exp.expense.created_at|date:"Y-m-d H:i" }}</td>
+                            <td data-label="Type">{{ exp.kind_display }}</td>
+                            <td data-label="Amount (Rs)" class="text-right">Rs {{ exp.amount_formatted }}</td>
+                            <td data-label="Note">{{ exp.expense.note|default:"-" }}</td>
+                            <td data-label="Recorded By">{{ exp.expense.created_by.username|default:"-" }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="6">No expenses recorded for this run.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
 
-        <div class="card" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; max-width: 500px; margin: 0;">
+        <div class="card" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; max-width: 500px; margin: 1.5rem 0 0 0;">
             <h4 style="margin-top: 0; margin-bottom: 1rem;">Add Expense</h4>
 
             {% if expense_form_errors %}
@@ -151,7 +157,7 @@
 
                 <div class="form-group">
                     <label for="kind">Expense Type *</label>
-                    <select name="kind" id="kind" class="form-control" style="max-width: 100%; min-height: 40px; font-size: 1rem;" required>
+                    <select name="kind" id="kind" class="form-control" style="width: 100%; min-height: 44px; font-size: 1rem;" required>
                         {% for val, label in expense_kinds %}
                             <option value="{{ val }}" {% if selected_expense_kind == val %}selected{% endif %}>
                                 {{ label }}
@@ -166,7 +172,7 @@
                            name="amount"
                            id="amount"
                            class="form-control touch-target"
-                           style="max-width: 100%; font-size: 1rem;"
+                           style="width: 100%; font-size: 1rem;"
                            value="{{ entered_expense_amount|default:'' }}"
                            placeholder="e.g. 1200 or 1200.50"
                            required>
@@ -178,7 +184,7 @@
                            name="note"
                            id="note"
                            class="form-control"
-                           style="max-width: 100%;"
+                           style="width: 100%;"
                            value="{{ entered_expense_note|default:'' }}"
                            placeholder="e.g. 2 workers 1 shift">
                 </div>

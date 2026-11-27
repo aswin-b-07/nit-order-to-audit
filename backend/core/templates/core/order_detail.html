@@ -4,42 +4,85 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>Order #{{ order.id }}</h2>
-        <span class="badge" style="font-size: 1.1rem; font-weight: bold;">{{ order.status }}</span>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">Order #{{ order.id }}</h2>
+        <span class="badge badge-{{ order.status|lower }}" style="font-size: 1rem; font-weight: bold; padding: 0.35rem 0.85rem;">{{ order.status }}</span>
     </div>
 
-    <p><strong>Customer:</strong> {{ order.customer.name }}</p>
-    <p><strong>Salesman:</strong> {{ order.salesman.username }}</p>
-    <p><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
-    {% if order.reject_reason %}
-        <p><strong class="text-danger">Reject Reason:</strong> {{ order.reject_reason }}</p>
-    {% endif %}
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem;">
+        <p style="margin-bottom: 0.4rem;"><strong>Customer:</strong> {{ order.customer.name }}</p>
+        <p style="margin-bottom: 0.4rem;"><strong>Salesman:</strong> {{ order.salesman.username }}</p>
+        <p style="margin-bottom: 0.4rem;"><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
+        {% if order.reject_reason %}
+            <p style="margin-bottom: 0;"><strong class="text-danger">Reject Reason:</strong> {{ order.reject_reason }}</p>
+        {% endif %}
+    </div>
 
     <h3>Order Lines</h3>
     {% if order.status == "SUBMITTED" and can_edit_order %}
         <form method="post" action="{% url 'order_action' order.id 'update_lines' %}">
             {% csrf_token %}
             <input type="hidden" name="action" value="update_lines">
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th class="text-right">Ordered Quantity</th>
+                            <th class="text-right">Available Stock</th>
+                            <th>Stock Status</th>
+                            <th class="text-right">Unit Price (Rs)</th>
+                            <th class="text-right">Line Total (Rs)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for l in lines_data %}
+                            <tr>
+                                <td>{{ l.line.product.name }}</td>
+                                <td class="text-right">
+                                    <input type="number" name="qty_{{ l.line.id }}" value="{{ l.line.quantity }}" min="1" class="form-control" style="width: 100px; display: inline-block; text-align: right;" required>
+                                </td>
+                                <td class="text-right">{{ l.available }} packets</td>
+                                <td>
+                                    {% if l.shortage > 0 %}
+                                        <span class="text-danger" style="font-weight: bold;">Shortage of {{ l.shortage }} packets</span>
+                                    {% else %}
+                                        <span style="color: green; font-weight: bold;">Stock OK</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-right">
+                                    <input type="text" name="price_{{ l.line.id }}" value="{{ l.unit_price_rupees }}" class="form-control" style="width: 120px; display: inline-block; text-align: right;">
+                                </td>
+                                <td class="text-right">Rs {{ l.line_total_formatted }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1rem;">
+                <button type="submit" class="btn btn-secondary">Update Lines</button>
+                <h3 style="margin: 0;">Total: Rs {{ order_total_formatted }}</h3>
+            </div>
+        </form>
+    {% else %}
+        <div class="table-responsive">
             <table>
                 <thead>
                     <tr>
                         <th>Product</th>
-                        <th>Ordered Quantity</th>
-                        <th>Available Stock</th>
+                        <th class="text-right">Ordered Quantity</th>
+                        <th class="text-right">Available Stock</th>
                         <th>Stock Status</th>
-                        <th>Unit Price (Rs)</th>
-                        <th>Line Total (Rs)</th>
+                        <th class="text-right">Unit Price (Rs)</th>
+                        <th class="text-right">Line Total (Rs)</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for l in lines_data %}
                         <tr>
                             <td>{{ l.line.product.name }}</td>
-                            <td>
-                                <input type="number" name="qty_{{ l.line.id }}" value="{{ l.line.quantity }}" min="1" class="form-control" style="width: 100px;" required>
-                            </td>
-                            <td>{{ l.available }} packets</td>
+                            <td class="text-right">{{ l.line.quantity }} packets</td>
+                            <td class="text-right">{{ l.available }} packets</td>
                             <td>
                                 {% if l.shortage > 0 %}
                                     <span class="text-danger" style="font-weight: bold;">Shortage of {{ l.shortage }} packets</span>
@@ -47,83 +90,48 @@
                                     <span style="color: green; font-weight: bold;">Stock OK</span>
                                 {% endif %}
                             </td>
-                            <td>
-                                <input type="text" name="price_{{ l.line.id }}" value="{{ l.unit_price_rupees }}" class="form-control" style="width: 120px;">
-                            </td>
-                            <td>Rs {{ l.line_total_formatted }}</td>
+                            <td class="text-right">Rs {{ l.unit_price_formatted }}</td>
+                            <td class="text-right">Rs {{ l.line_total_formatted }}</td>
                         </tr>
                     {% endfor %}
                 </tbody>
             </table>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <button type="submit" class="btn btn-secondary">Update Lines</button>
-                <h3>Total: Rs {{ order_total_formatted }}</h3>
-            </div>
-        </form>
-    {% else %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Product</th>
-                    <th>Ordered Quantity</th>
-                    <th>Available Stock</th>
-                    <th>Stock Status</th>
-                    <th>Unit Price (Rs)</th>
-                    <th>Line Total (Rs)</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for l in lines_data %}
-                    <tr>
-                        <td>{{ l.line.product.name }}</td>
-                        <td>{{ l.line.quantity }} packets</td>
-                        <td>{{ l.available }} packets</td>
-                        <td>
-                            {% if l.shortage > 0 %}
-                                <span class="text-danger" style="font-weight: bold;">Shortage of {{ l.shortage }} packets</span>
-                            {% else %}
-                                <span style="color: green; font-weight: bold;">Stock OK</span>
-                            {% endif %}
-                        </td>
-                        <td>Rs {{ l.unit_price_formatted }}</td>
-                        <td>Rs {{ l.line_total_formatted }}</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        <div style="text-align: right;">
-            <h3>Total: Rs {{ order_total_formatted }}</h3>
+        </div>
+        <div style="text-align: right; margin-top: 0.75rem;">
+            <h3 style="margin: 0;">Total: Rs {{ order_total_formatted }}</h3>
         </div>
     {% endif %}
 
-    <div style="margin-top: 1.5rem;">
+    <div style="margin-top: 1.75rem;">
         <h3>Stock Availability Report</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Product</th>
-                    <th>Ordered</th>
-                    <th>Available</th>
-                    <th>Shortage / Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for rep in stock_rep %}
+        <div class="table-responsive">
+            <table>
+                <thead>
                     <tr>
-                        <td>{{ rep.product.name }}</td>
-                        <td>{{ rep.ordered }}</td>
-                        <td>{{ rep.available }}</td>
-                        <td {% if rep.shortage > 0 %}class="text-danger" style="font-weight: bold;"{% else %}style="color: green; font-weight: bold;"{% endif %}>
-                            {% if rep.shortage > 0 %}
-                                Shortage of {{ rep.shortage }} packets
-                            {% else %}
-                                Stock OK
-                            {% endif %}
-                        </td>
+                        <th>Product</th>
+                        <th class="text-right">Ordered</th>
+                        <th class="text-right">Available</th>
+                        <th>Shortage / Status</th>
                     </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {% for rep in stock_rep %}
+                        <tr>
+                            <td>{{ rep.product.name }}</td>
+                            <td class="text-right">{{ rep.ordered }}</td>
+                            <td class="text-right">{{ rep.available }}</td>
+                            <td {% if rep.shortage > 0 %}class="text-danger" style="font-weight: bold;"{% else %}style="color: green; font-weight: bold;"{% endif %}>
+                                {% if rep.shortage > 0 %}
+                                    Shortage of {{ rep.shortage }} packets
+                                {% else %}
+                                    Stock OK
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <div class="actions-row" style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
@@ -137,10 +145,10 @@
             {% endif %}
 
             {% if can_reject_order %}
-                <form method="post" action="{% url 'order_action' order.id 'reject' %}" style="display: inline-flex; gap: 0.5rem; align-items: center;">
+                <form method="post" action="{% url 'order_action' order.id 'reject' %}" style="display: inline-flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
                     {% csrf_token %}
                     <input type="hidden" name="action" value="reject">
-                    <input type="text" name="reason" placeholder="Rejection reason" class="form-control" required>
+                    <input type="text" name="reason" placeholder="Rejection reason" class="form-control" style="width: auto; min-width: 200px;" required>
                     <button type="submit" class="btn btn-danger">Reject</button>
                 </form>
             {% endif %}
@@ -164,17 +172,17 @@
             {% endif %}
 
             {% if invoice %}
-                <div style="background: #f7fafc; padding: 1.5rem; border-radius: 6px; border: 1px solid #e2e8f0; margin-top: 1.5rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div style="background: #f8fafc; padding: 1.5rem; border-radius: 8px; border: 1px solid #e2e8f0; margin-top: 1.5rem; width: 100%; box-sizing: border-box;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
                         <h3 style="margin: 0;">Invoice {{ invoice.number }}</h3>
                         <a href="{% url 'invoice_detail' invoice.id %}" class="btn btn-secondary">View Invoice Detail</a>
                     </div>
-                    <p><strong>Status:</strong> <span class="badge">{{ invoice.status }}</span></p>
+                    <p><strong>Status:</strong> <span class="badge badge-{{ invoice.status|lower }}">{{ invoice.status }}</span></p>
                     <p><strong>Invoice Total:</strong> Rs {{ invoice.total_paise|default:0|floatformat:2 }} ({{ order_total_formatted }})</p>
-                    <h4 style="color: #2b6cb0;">Outstanding: Rs {{ invoice_outstanding_formatted }}</h4>
+                    <h4 style="color: #2563eb;">Outstanding: Rs {{ invoice_outstanding_formatted }}</h4>
 
                     {% if invoice.status == "ISSUED" %}
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem; border-top: 1px solid #cbd5e0; padding-top: 1.5rem;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem; border-top: 1px solid #cbd5e1; padding-top: 1.5rem;">
                             {% if can_record_payment %}
                                 <div class="card" style="margin-bottom: 0; background: #fff;">
                                     <h4>Record Payment</h4>
@@ -202,7 +210,7 @@
                                             <label for="id_ord_reference">Reference:</label>
                                             <input type="text" name="reference" id="id_ord_reference" class="form-control" placeholder="Cheque / UTR / Note">
                                         </div>
-                                        <button type="submit" class="btn btn-primary">Record Payment</button>
+                                        <button type="submit" class="btn btn-primary" style="width: 100%;">Record Payment</button>
                                     </form>
                                 </div>
                             {% endif %}
@@ -210,7 +218,7 @@
                             {% if can_cancel_invoice %}
                                 <div class="card" style="margin-bottom: 0; background: #fff;">
                                     <h4 class="text-danger">Cancel Invoice</h4>
-                                    <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
+                                    <p style="font-size: 0.85rem; color: #64748b;">Note: Invoices with recorded payments cannot be cancelled.</p>
                                     <form method="post" action="{% url 'order_action' order.id 'cancel_invoice' %}">
                                         {% csrf_token %}
                                         <input type="hidden" name="action" value="cancel_invoice">
@@ -218,7 +226,7 @@
                                             <label for="id_ord_cancel_reason">Reason for cancellation:</label>
                                             <textarea name="reason" id="id_ord_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
                                         </div>
-                                        <button type="submit" class="btn btn-danger">Cancel Invoice</button>
+                                        <button type="submit" class="btn btn-danger" style="width: 100%;">Cancel Invoice</button>
                                     </form>
                                 </div>
                             {% endif %}

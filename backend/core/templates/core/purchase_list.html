@@ -4,42 +4,44 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem;">
-        <h2>Purchases</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.25rem;">
+        <h2 style="margin: 0;">Purchases</h2>
         {% if can_record_purchase %}
             <a href="{% url 'purchase_create' %}" class="btn btn-primary touch-target">Record Purchase</a>
         {% endif %}
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Date</th>
-                <th>Supplier</th>
-                <th>Item</th>
-                <th>Quantity</th>
-                <th>Total Value (Rs)</th>
-                <th>Invoice No</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for p in purchases_data %}
+    <div class="table-responsive">
+        <table>
+            <thead>
                 <tr>
-                    <td data-label="ID">#{{ p.purchase.id }}</td>
-                    <td data-label="Date">{{ p.purchase.purchase_date|date:"Y-m-d" }}</td>
-                    <td data-label="Supplier">{{ p.purchase.supplier.name }}</td>
-                    <td data-label="Item">{{ p.purchase.item.name }}</td>
-                    <td data-label="Quantity">{{ p.quantity_display }}</td>
-                    <td data-label="Total Value (Rs)">Rs {{ p.total_formatted }}</td>
-                    <td data-label="Invoice No">{{ p.purchase.invoice_no|default:"-" }}</td>
+                    <th>ID</th>
+                    <th>Date</th>
+                    <th>Supplier</th>
+                    <th>Item</th>
+                    <th class="text-right">Quantity</th>
+                    <th class="text-right">Total Value (Rs)</th>
+                    <th>Invoice No</th>
                 </tr>
-            {% empty %}
-                <tr>
-                    <td colspan="7">No purchases recorded yet.</td>
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                {% for p in purchases_data %}
+                    <tr>
+                        <td data-label="ID">#{{ p.purchase.id }}</td>
+                        <td data-label="Date">{{ p.purchase.purchase_date|date:"Y-m-d" }}</td>
+                        <td data-label="Supplier">{{ p.purchase.supplier.name }}</td>
+                        <td data-label="Item">{{ p.purchase.item.name }}</td>
+                        <td data-label="Quantity" class="text-right">{{ p.quantity_display }}</td>
+                        <td data-label="Total Value (Rs)" class="text-right">Rs {{ p.total_formatted }}</td>
+                        <td data-label="Invoice No">{{ p.purchase.invoice_no|default:"-" }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="7">No purchases recorded yet.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 {% endblock %}

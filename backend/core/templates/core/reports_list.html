@@ -4,51 +4,51 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-        <h2>Financial & Factory Reports</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+        <h2 style="margin: 0;">Financial & Factory Reports</h2>
     </div>
 
     {% if date_error %}
-        <div class="alert alert-error" style="margin-bottom: 1rem; color: #b91c1c; background-color: #fef2f2; padding: 0.75rem; border-radius: 4px; border: 1px solid #f87171;">
+        <div class="alert alert-error">
             {{ date_error }}
         </div>
     {% endif %}
 
-    <form method="get" action="{% url 'reports_list' %}" style="margin-bottom: 2rem; padding: 1rem; background-color: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+    <form method="get" action="{% url 'reports_list' %}" style="margin-bottom: 1.5rem; padding: 1rem; background-color: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0; display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
         <div>
-            <label for="from" style="display: block; font-weight: 500; font-size: 0.875rem; margin-bottom: 0.25rem;">From Date</label>
-            <input type="date" id="from" name="from" value="{{ date_from }}" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px;">
+            <label for="from" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">From Date</label>
+            <input type="date" id="from" name="from" value="{{ date_from }}" class="form-control" style="min-height: 40px; padding: 0.4rem 0.6rem;">
         </div>
         <div>
-            <label for="to" style="display: block; font-weight: 500; font-size: 0.875rem; margin-bottom: 0.25rem;">To Date</label>
-            <input type="date" id="to" name="to" value="{{ date_to }}" style="padding: 0.4rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 4px;">
+            <label for="to" style="display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.25rem;">To Date</label>
+            <input type="date" id="to" name="to" value="{{ date_to }}" class="form-control" style="min-height: 40px; padding: 0.4rem 0.6rem;">
         </div>
-        <div>
-            <button type="submit" class="btn btn-primary" style="padding: 0.45rem 1rem;">Filter Reports</button>
-            <a href="{% url 'reports_list' %}" class="btn btn-secondary" style="padding: 0.45rem 0.75rem; text-decoration: none;">Clear</a>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button type="submit" class="btn btn-primary" style="min-height: 40px;">Filter Reports</button>
+            <a href="{% url 'reports_list' %}" class="btn btn-secondary" style="min-height: 40px;">Clear</a>
         </div>
     </form>
 
     <div class="table-responsive">
-        <table class="table" style="width: 100%; border-collapse: collapse;">
+        <table>
             <thead>
-                <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
-                    <th style="padding: 0.75rem;">Report Name</th>
-                    <th style="padding: 0.75rem;">Description</th>
-                    <th style="padding: 0.75rem; text-align: right;">Action</th>
+                <tr>
+                    <th>Report Name</th>
+                    <th>Description</th>
+                    <th class="text-right">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for report in reports %}
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 0.75rem; font-weight: 600;">
+                    <tr>
+                        <td data-label="Report Name" style="font-weight: 600;">
                             {{ report.title }}
                         </td>
-                        <td style="padding: 0.75rem; color: #64748b;">
+                        <td data-label="Description" style="color: #64748b;">
                             {{ report.description }}
                         </td>
-                        <td style="padding: 0.75rem; text-align: right;">
-                            <a href="{{ report.csv_url }}" class="btn btn-secondary" style="text-decoration: none; font-size: 0.875rem;">Download CSV</a>
+                        <td data-label="Action" class="text-right">
+                            <a href="{{ report.csv_url }}" class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem; min-height: 36px;">Download CSV</a>
                         </td>
                     </tr>
                 {% endfor %}

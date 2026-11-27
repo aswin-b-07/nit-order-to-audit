@@ -21,7 +21,7 @@
 
         <div class="form-group">
             <label for="product">Product *</label>
-            <select name="product" id="product" class="form-control" style="max-width: 100%; min-height: 48px; font-size: 1rem;" required>
+            <select name="product" id="product" class="form-control" style="width: 100%; min-height: 48px; font-size: 1rem;" required>
                 {% for p in products %}
                     <option value="{{ p.id }}" {% if selected_product_id == p.id|stringformat:"s" or selected_product_id == p.id or forloop.first and not selected_product_id %}selected{% endif %}>
                         {{ p.name }}
@@ -31,7 +31,7 @@
         </div>
 
         <h3 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Raw Materials & Packaging Issued</h3>
-        <p style="color: #666; font-size: 0.9rem; margin-bottom: 1rem;">Enter quantities issued in display units (kg, L, pcs).</p>
+        <p style="color: #64748b; font-size: 0.9rem; margin-bottom: 1rem;">Enter quantities issued in display units (kg, L, pcs).</p>
 
         {% for line in bom_lines_data %}
             <div class="form-group" style="margin-bottom: 1rem;">
@@ -42,7 +42,7 @@
                        name="item_{{ line.item.id }}"
                        id="item_{{ line.item.id }}"
                        class="form-control touch-target"
-                       style="max-width: 100%; font-size: 1rem;"
+                       style="width: 100%; font-size: 1rem;"
                        value="{{ line.entered_val|default:'' }}"
                        placeholder="Standard: {{ line.standard_display }} {{ line.display_unit }}">
             </div>
@@ -56,7 +56,7 @@
                    name="actual_good_packets"
                    id="actual_good_packets"
                    class="form-control touch-target"
-                   style="max-width: 100%; font-size: 1rem;"
+                   style="width: 100%; font-size: 1rem;"
                    value="{{ entered_good_packets|default:'' }}"
                    placeholder="e.g. 188"
                    required>
@@ -68,7 +68,7 @@
                    name="damaged_pouches"
                    id="damaged_pouches"
                    class="form-control touch-target"
-                   style="max-width: 100%; font-size: 1rem;"
+                   style="width: 100%; font-size: 1rem;"
                    value="{{ entered_damaged_pouches|default:'0' }}"
                    placeholder="e.g. 6">
         </div>
@@ -79,12 +79,12 @@
                    name="cartons_used"
                    id="cartons_used"
                    class="form-control touch-target"
-                   style="max-width: 100%; font-size: 1rem;"
+                   style="width: 100%; font-size: 1rem;"
                    value="{{ entered_cartons_used|default:'' }}"
                    placeholder="e.g. 9">
         </div>
 
-        <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem;">
+        <div style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
             <button type="submit" class="btn btn-primary btn-big">Save Production Run</button>
             <a href="{% url 'production_list' %}" class="btn btn-secondary btn-big">Cancel</a>
         </div>

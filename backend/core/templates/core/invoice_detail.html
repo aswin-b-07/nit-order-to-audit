@@ -4,115 +4,119 @@
 
 {% block content %}
 <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>Invoice {{ invoice.number }}</h2>
-        <div>
-            <span class="badge" style="font-size: 1.1rem; font-weight: bold; margin-right: 1rem;">{{ invoice.status }}</span>
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">Invoice {{ invoice.number }}</h2>
+        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+            <span class="badge badge-{{ invoice.status|lower }}" style="font-size: 1rem; font-weight: bold; padding: 0.35rem 0.85rem;">{{ invoice.status }}</span>
             {% if can_download_invoice_pdf %}
                 <a href="{% url 'download_invoice_pdf' invoice.id %}" class="btn btn-secondary">Download PDF</a>
             {% endif %}
         </div>
     </div>
 
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+    <div class="grid-2col" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem;">
         <div>
-            <p><strong>Date:</strong> {{ invoice.invoice_date|date:"d-m-Y" }}</p>
-            <p><strong>Financial Year:</strong> {{ invoice.fy }}</p>
-            <p><strong>Customer:</strong> {{ invoice.customer_name }}</p>
-            <p><strong>Customer GSTIN:</strong> {{ invoice.customer_gstin|default:"Unregistered" }}</p>
+            <p style="margin-bottom: 0.4rem;"><strong>Date:</strong> {{ invoice.invoice_date|date:"d-m-Y" }}</p>
+            <p style="margin-bottom: 0.4rem;"><strong>Financial Year:</strong> {{ invoice.fy }}</p>
+            <p style="margin-bottom: 0.4rem;"><strong>Customer:</strong> {{ invoice.customer_name }}</p>
+            <p style="margin-bottom: 0;"><strong>Customer GSTIN:</strong> {{ invoice.customer_gstin|default:"Unregistered" }}</p>
         </div>
         <div>
-            <p><strong>Supply Type:</strong> {{ invoice.supply_type }}</p>
-            <p><strong>Order:</strong> <a href="{% url 'order_detail' invoice.order.id %}">#{{ invoice.order.id }}</a></p>
-            <p><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
+            <p style="margin-bottom: 0.4rem;"><strong>Supply Type:</strong> {{ invoice.supply_type }}</p>
+            <p style="margin-bottom: 0.4rem;"><strong>Order:</strong> <a href="{% url 'order_detail' invoice.order.id %}">#{{ invoice.order.id }}</a></p>
+            <p style="margin-bottom: 0;"><strong>Customer Outstanding:</strong> Rs {{ customer_outstanding_formatted }}</p>
         </div>
     </div>
 
     <h3>Line Items</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Description</th>
-                <th>HSN</th>
-                <th>Qty</th>
-                <th>Unit Price (Rs)</th>
-                <th>Taxable (Rs)</th>
-                {% if invoice.supply_type == "INTRA" %}
-                    <th>CGST (Rs)</th>
-                    <th>SGST (Rs)</th>
-                {% else %}
-                    <th>IGST (Rs)</th>
-                {% endif %}
-                <th>Total (Rs)</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for l in lines_data %}
-                <tr>
-                    <td>{{ l.line.description }}</td>
-                    <td>{{ l.line.hsn_code }}</td>
-                    <td>{{ l.line.quantity }}</td>
-                    <td>Rs {{ l.unit_price_formatted }}</td>
-                    <td>Rs {{ l.taxable_formatted }}</td>
-                    {% if invoice.supply_type == "INTRA" %}
-                        <td>Rs {{ l.cgst_formatted }}</td>
-                        <td>Rs {{ l.sgst_formatted }}</td>
-                    {% else %}
-                        <td>Rs {{ l.igst_formatted }}</td>
-                    {% endif %}
-                    <td>Rs {{ l.total_formatted }}</td>
-                </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
-        <div style="min-width: 250px;">
-            <p><strong>Taxable Amount:</strong> Rs {{ taxable_formatted }}</p>
-            {% if invoice.supply_type == "INTRA" %}
-                <p><strong>CGST:</strong> Rs {{ cgst_formatted }}</p>
-                <p><strong>SGST:</strong> Rs {{ sgst_formatted }}</p>
-            {% else %}
-                <p><strong>IGST:</strong> Rs {{ igst_formatted }}</p>
-            {% endif %}
-            <p><strong>Total Amount:</strong> Rs {{ total_formatted }}</p>
-            <p><strong>Paid So Far:</strong> Rs {{ paid_formatted }}</p>
-            <h3 style="color: #2b6cb0;">Outstanding: Rs {{ outstanding_formatted }}</h3>
-        </div>
-    </div>
-
-    <div style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1rem;">
-        <h3>Payments Received</h3>
+    <div class="table-responsive">
         <table>
             <thead>
                 <tr>
-                    <th>Date</th>
-                    <th>Mode</th>
-                    <th>Reference</th>
-                    <th>Amount (Rs)</th>
+                    <th>Description</th>
+                    <th>HSN</th>
+                    <th class="text-right">Qty</th>
+                    <th class="text-right">Unit Price (Rs)</th>
+                    <th class="text-right">Taxable (Rs)</th>
+                    {% if invoice.supply_type == "INTRA" %}
+                        <th class="text-right">CGST (Rs)</th>
+                        <th class="text-right">SGST (Rs)</th>
+                    {% else %}
+                        <th class="text-right">IGST (Rs)</th>
+                    {% endif %}
+                    <th class="text-right">Total (Rs)</th>
                 </tr>
             </thead>
             <tbody>
-                {% for p in payments_data %}
+                {% for l in lines_data %}
                     <tr>
-                        <td>{{ p.payment.payment_date|date:"d-m-Y" }}</td>
-                        <td>{{ p.payment.mode }}</td>
-                        <td>{{ p.payment.reference|default:"-" }}</td>
-                        <td>Rs {{ p.amount_formatted }}</td>
-                    </tr>
-                {% empty %}
-                    <tr>
-                        <td colspan="4">No payments recorded yet.</td>
+                        <td>{{ l.line.description }}</td>
+                        <td>{{ l.line.hsn_code }}</td>
+                        <td class="text-right">{{ l.line.quantity }}</td>
+                        <td class="text-right">Rs {{ l.unit_price_formatted }}</td>
+                        <td class="text-right">Rs {{ l.taxable_formatted }}</td>
+                        {% if invoice.supply_type == "INTRA" %}
+                            <td class="text-right">Rs {{ l.cgst_formatted }}</td>
+                            <td class="text-right">Rs {{ l.sgst_formatted }}</td>
+                        {% else %}
+                            <td class="text-right">Rs {{ l.igst_formatted }}</td>
+                        {% endif %}
+                        <td class="text-right">Rs {{ l.total_formatted }}</td>
                     </tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 
+    <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+        <div style="min-width: 260px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1rem;">
+            <p style="margin-bottom: 0.35rem;"><strong>Taxable Amount:</strong> Rs {{ taxable_formatted }}</p>
+            {% if invoice.supply_type == "INTRA" %}
+                <p style="margin-bottom: 0.35rem;"><strong>CGST:</strong> Rs {{ cgst_formatted }}</p>
+                <p style="margin-bottom: 0.35rem;"><strong>SGST:</strong> Rs {{ sgst_formatted }}</p>
+            {% else %}
+                <p style="margin-bottom: 0.35rem;"><strong>IGST:</strong> Rs {{ igst_formatted }}</p>
+            {% endif %}
+            <p style="margin-bottom: 0.35rem;"><strong>Total Amount:</strong> Rs {{ total_formatted }}</p>
+            <p style="margin-bottom: 0.35rem;"><strong>Paid So Far:</strong> Rs {{ paid_formatted }}</p>
+            <h3 style="color: #2563eb; margin: 0.5rem 0 0 0;">Outstanding: Rs {{ outstanding_formatted }}</h3>
+        </div>
+    </div>
+
+    <div style="margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.25rem;">
+        <h3>Payments Received</h3>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Mode</th>
+                        <th>Reference</th>
+                        <th class="text-right">Amount (Rs)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in payments_data %}
+                        <tr>
+                            <td>{{ p.payment.payment_date|date:"d-m-Y" }}</td>
+                            <td>{{ p.payment.mode }}</td>
+                            <td>{{ p.payment.reference|default:"-" }}</td>
+                            <td class="text-right">Rs {{ p.amount_formatted }}</td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="4">No payments recorded yet.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     {% if invoice.status == "ISSUED" and can_record_payment or invoice.status == "ISSUED" and can_cancel_invoice %}
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 2rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem;">
             {% if can_record_payment %}
-                <div class="card" style="margin-bottom: 0;">
+                <div class="card" style="margin-bottom: 0; background: #ffffff;">
                     <h4>Record Payment</h4>
                     <form method="post" action="{% url 'invoice_action' invoice.id 'record_payment' %}">
                         {% csrf_token %}
@@ -138,15 +142,15 @@
                             <label for="id_reference">Reference:</label>
                             <input type="text" name="reference" id="id_reference" class="form-control" placeholder="Cheque / UTR / Note">
                         </div>
-                        <button type="submit" class="btn btn-primary">Record Payment</button>
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">Record Payment</button>
                     </form>
                 </div>
             {% endif %}
 
             {% if can_cancel_invoice %}
-                <div class="card" style="margin-bottom: 0;">
+                <div class="card" style="margin-bottom: 0; background: #ffffff;">
                     <h4 class="text-danger">Cancel Invoice</h4>
-                    <p style="font-size: 0.85rem; color: #666;">Note: Invoices with recorded payments cannot be cancelled.</p>
+                    <p style="font-size: 0.85rem; color: #64748b;">Note: Invoices with recorded payments cannot be cancelled.</p>
                     <form method="post" action="{% url 'invoice_action' invoice.id 'cancel_invoice' %}">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="cancel_invoice">
@@ -154,7 +158,7 @@
                             <label for="id_cancel_reason">Reason for cancellation:</label>
                             <textarea name="reason" id="id_cancel_reason" class="form-control" rows="4" placeholder="Enter reason..." required></textarea>
                         </div>
-                        <button type="submit" class="btn btn-danger">Cancel Invoice</button>
+                        <button type="submit" class="btn btn-danger" style="width: 100%;">Cancel Invoice</button>
                     </form>
                 </div>
             {% endif %}
