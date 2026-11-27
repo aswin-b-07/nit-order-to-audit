@@ -3,3 +3,4 @@ __pycache__/
 db.sqlite3
 .dart_tool/
 build/
+staticfiles/
